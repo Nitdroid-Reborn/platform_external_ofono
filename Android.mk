@@ -59,6 +59,9 @@ LOCAL_SRC_FILES:= \
 	drivers/isimodem/call-barring.c \
 	drivers/isimodem/call-meter.c \
 	plugins/modemconf.c \
+	plugins/n900modem.c \
+	plugins/n900gpio.c \
+	plugins/n900gpio.h \
 	src/main.c \
 	src/common.c \
 	src/idmap.c \

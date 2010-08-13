@@ -131,6 +131,10 @@ builtin_sources += $(gisi_sources) \
 
 builtin_modules += usbpnmodem
 builtin_sources += plugins/usbpnmodem.c
+
+builtin_modules += n900modem
+builtin_sources += plugins/n900modem.c plugins/n900gpio.c plugins/n900gpio.h
+
 endif
 
 if ATMODEM

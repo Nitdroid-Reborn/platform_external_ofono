@@ -17,6 +17,8 @@
 #  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #
 
+ifeq ($(BUILD_WITH_OFONO),true)
+
 #
 # ofonod
 #
@@ -123,3 +125,5 @@ LOCAL_SHARED_LIBRARIES := \
 ##
 
 include $(BUILD_EXECUTABLE)
+
+endif

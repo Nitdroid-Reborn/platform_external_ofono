@@ -28,7 +28,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
-#include <sys/signalfd.h>
+//#include <sys/signalfd.h>
 
 #include <gdbus.h>
 
@@ -53,6 +53,7 @@ static gboolean quit_eventloop(gpointer user_data)
 	return FALSE;
 }
 
+#if 0
 static gboolean signal_cb(GIOChannel *channel, GIOCondition cond, gpointer data)
 {
 	static int terminated = 0;
@@ -84,6 +85,7 @@ static gboolean signal_cb(GIOChannel *channel, GIOCondition cond, gpointer data)
 
 	return TRUE;
 }
+#endif
 
 static void system_bus_disconnected(DBusConnection *conn, void *user_data)
 {
@@ -130,6 +132,8 @@ int main(int argc, char **argv)
 	GIOChannel *signal_io;
 	int signal_source;
 
+	setenv("OFONO_ISI_DEBUG", "all", 1);
+
 #ifdef HAVE_CAPNG
 	/* Drop capabilities */
 #endif
@@ -143,18 +147,19 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+#if 0
 	signal_fd = signalfd(-1, &mask, 0);
 	if (signal_fd < 0) {
 		perror("Can't create signal filedescriptor");
 		return 1;
 	}
-
 	signal_io = g_io_channel_unix_new(signal_fd);
 	g_io_channel_set_close_on_unref(signal_io, TRUE);
 	signal_source = g_io_add_watch(signal_io,
 			G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
 			signal_cb, GINT_TO_POINTER(signal_fd));
 	g_io_channel_unref(signal_io);
+#endif
 
 #ifdef NEED_THREADS
 	if (g_thread_supported() == FALSE)

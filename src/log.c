@@ -24,7 +24,10 @@
 #endif
 
 #include <stdarg.h>
-#include <syslog.h>
+
+#define LOG_TAG "ofono"
+#define vsyslog(level, format, ap) LOG_PRI_VA(level, LOG_TAG, format, ap);
+#include <cutils/log.h>
 
 #include "ofono.h"
 
@@ -41,7 +44,7 @@ void ofono_info(const char *format, ...)
 
 	va_start(ap, format);
 
-	vsyslog(LOG_INFO, format, ap);
+	vsyslog(ANDROID_LOG_DEBUG, format, ap);
 
 	va_end(ap);
 }
@@ -59,7 +62,7 @@ void ofono_warn(const char *format, ...)
 
 	va_start(ap, format);
 
-	vsyslog(LOG_WARNING, format, ap);
+	vsyslog(ANDROID_LOG_WARN, format, ap);
 
 	va_end(ap);
 }
@@ -77,7 +80,7 @@ void ofono_error(const char *format, ...)
 
 	va_start(ap, format);
 
-	vsyslog(LOG_ERR, format, ap);
+	vsyslog(ANDROID_LOG_ERROR, format, ap);
 
 	va_end(ap);
 }
@@ -98,7 +101,7 @@ void ofono_debug(const char *format, ...)
 
 	va_start(ap, format);
 
-	vsyslog(LOG_DEBUG, format, ap);
+	vsyslog(ANDROID_LOG_DEBUG, format, ap);
 
 	va_end(ap);
 }
@@ -129,6 +132,7 @@ static ofono_bool_t is_enabled(struct ofono_debug_desc *desc)
 
 int __ofono_log_init(const char *debug, ofono_bool_t detach)
 {
+#if 0
 	int option = LOG_NDELAY | LOG_PID;
 	struct ofono_debug_desc *desc;
 	const char *name = NULL, *file = NULL;
@@ -152,18 +156,15 @@ int __ofono_log_init(const char *debug, ofono_bool_t detach)
 	if (detach == FALSE)
 		option |= LOG_PERROR;
 
-	openlog("ofonod", option, LOG_DAEMON);
+	//openlog("ofonod", option, LOG_DAEMON);
 
-	syslog(LOG_INFO, "oFono version %s", VERSION);
+	//syslog(LOG_INFO, "oFono version %s", VERSION);
+#endif
 
 	return 0;
 }
 
 void __ofono_log_cleanup(void)
 {
-	syslog(LOG_INFO, "Exit");
-
-	closelog();
-
 	g_strfreev(enabled);
 }

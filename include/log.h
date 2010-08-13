@@ -62,7 +62,7 @@ struct ofono_debug_desc {
 	__attribute__((used, section("__debug"), aligned(8))) = { \
 		.file = __FILE__, .flags = OFONO_DEBUG_FLAG_DEFAULT, \
 	}; \
-	if (__ofono_debug_desc.flags & OFONO_DEBUG_FLAG_PRINT) \
+	if (1 || ( __ofono_debug_desc.flags & OFONO_DEBUG_FLAG_PRINT)) \
 		ofono_debug("%s:%s() " fmt, \
 					__FILE__, __FUNCTION__ , ## arg); \
 } while (0)

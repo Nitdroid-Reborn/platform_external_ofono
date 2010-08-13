@@ -2340,7 +2340,7 @@ static void sms_assembly_load(struct sms_assembly *assembly,
 
 	path = g_strdup_printf(SMS_BACKUP_PATH "/%s",
 			assembly->imsi, dir->d_name);
-	len = scandir(path, &segments, NULL, versionsort);
+	len = scandir(path, &segments, NULL, alphasort);
 	g_free(path);
 
 	if (len < 0)

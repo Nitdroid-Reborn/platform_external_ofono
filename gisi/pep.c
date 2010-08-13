@@ -142,7 +142,6 @@ unsigned g_isi_pep_get_ifindex(const GIsiPEP *pep)
 	unsigned ifi;
 	socklen_t len = sizeof(ifi);
 
-	g_assert(pep->gprs_fd != -1);
 
 	getsockopt(pep->gprs_fd, SOL_PNPIPE, PNPIPE_IFINDEX, &ifi, &len);
 	return ifi;

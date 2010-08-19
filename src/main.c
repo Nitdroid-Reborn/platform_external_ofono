@@ -132,8 +132,6 @@ int main(int argc, char **argv)
 	GIOChannel *signal_io;
 	int signal_source;
 
-	setenv("OFONO_ISI_DEBUG", "all", 1);
-
 #ifdef HAVE_CAPNG
 	/* Drop capabilities */
 #endif
@@ -142,10 +140,12 @@ int main(int argc, char **argv)
 	sigaddset(&mask, SIGTERM);
 	sigaddset(&mask, SIGINT);
 
+#if 0
 	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
 		perror("Can't set signal mask");
 		return 1;
 	}
+#endif
 
 #if 0
 	signal_fd = signalfd(-1, &mask, 0);

@@ -335,13 +335,13 @@ static gboolean mtc_state_cb(GIsiClient *client,
 
 	DBG("cause: %s (0x%02X)", mtc_isi_cause_name(msg[1]), msg[1]);
 
-	if (msg && msg[1] == MTC_OK) {
-		//isi->online_cbd = cbd;
-		//return TRUE;
+	if (msg[1] == MTC_OK) {
+		isi->online_cbd = cbd;
+		return TRUE;
 	}
 
 err:
-	if (msg && (msg[1] == MTC_ALREADY_ACTIVE || msg[1] == MTC_OK))
+	if (msg && msg[1] == MTC_ALREADY_ACTIVE)
 		CALLBACK_WITH_SUCCESS(cb, cbd->data);
 	else
 		CALLBACK_WITH_FAILURE(cb, cbd->data);
@@ -381,7 +381,6 @@ static void isi_modem_pre_sim(struct ofono_modem *modem)
 
 	DBG("(%p) with %s", modem, isi->ifname);
 
-	isi_infoserver_create(isi->modem, isi->idx);
 	ofono_sim_create(isi->modem, 0, "isimodem", isi->idx);
 	ofono_devinfo_create(isi->modem, 0, "isimodem", isi->idx);
 	ofono_voicecall_create(isi->modem, 0, "isimodem", isi->idx);

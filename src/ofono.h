@@ -57,6 +57,7 @@ DBusMessage *__ofono_error_sim_not_ready(DBusMessage *msg);
 DBusMessage *__ofono_error_in_use(DBusMessage *msg);
 DBusMessage *__ofono_error_not_attached(DBusMessage *msg);
 DBusMessage *__ofono_error_attach_in_progress(DBusMessage *msg);
+DBusMessage *__ofono_error_canceled(DBusMessage *msg);
 
 void __ofono_dbus_pending_reply(DBusMessage **msg, DBusMessage *reply);
 
@@ -162,16 +163,44 @@ gboolean __ofono_modem_remove_atom_watch(struct ofono_modem *modem,
 void __ofono_atom_free(struct ofono_atom *atom);
 
 #include <ofono/call-barring.h>
+
+gboolean __ofono_call_barring_is_busy(struct ofono_call_barring *cb);
+
 #include <ofono/call-forwarding.h>
+
+gboolean __ofono_call_forwarding_is_busy(struct ofono_call_forwarding *cf);
+
 #include <ofono/call-meter.h>
 #include <ofono/call-settings.h>
+
+gboolean __ofono_call_settings_is_busy(struct ofono_call_settings *cs);
+
 #include <ofono/cbs.h>
 #include <ofono/devinfo.h>
 #include <ofono/phonebook.h>
-#include <ofono/voicecall.h>
 #include <ofono/gprs.h>
 #include <ofono/gprs-context.h>
 #include <ofono/radio-settings.h>
+
+#include <ofono/voicecall.h>
+
+enum ofono_voicecall_interaction {
+	OFONO_VOICECALL_INTERACTION_NONE	= 0,
+	OFONO_VOICECALL_INTERACTION_PUT_ON_HOLD	= 1,
+	OFONO_VOICECALL_INTERACTION_DISCONNECT	= 2,
+};
+
+typedef void (*ofono_voicecall_dial_cb_t)(struct ofono_call *call, void *data);
+
+ofono_bool_t __ofono_voicecall_is_busy(struct ofono_voicecall *vc,
+					enum ofono_voicecall_interaction type);
+
+int __ofono_voicecall_dial(struct ofono_voicecall *vc,
+				const char *addr, int addr_type,
+				const char *message, unsigned char icon_id,
+				enum ofono_voicecall_interaction interaction,
+				ofono_voicecall_dial_cb_t cb, void *user_data);
+void __ofono_voicecall_dial_cancel(struct ofono_voicecall *vc);
 
 #include <ofono/sms.h>
 
@@ -234,6 +263,7 @@ gboolean __ofono_ussd_passwd_register(struct ofono_ussd *ussd, const char *sc,
 					ofono_ussd_passwd_cb_t cb, void *data,
 					ofono_destroy_func destroy);
 void __ofono_ussd_passwd_unregister(struct ofono_ussd *ussd, const char *sc);
+gboolean __ofono_ussd_is_busy(struct ofono_ussd *ussd);
 
 #include <ofono/netreg.h>
 

@@ -324,8 +324,7 @@ static void mbm_cgdcont_cb(gboolean ok, GAtResult *result, gpointer user_data)
 				mbm_enap_up_cb, ncbd, g_free) > 0)
 		return;
 
-	if (ncbd)
-		g_free(ncbd);
+	g_free(ncbd);
 
 	gcd->active_context = 0;
 
@@ -371,8 +370,7 @@ static void mbm_gprs_activate_primary(struct ofono_gprs_context *gc,
 	return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, NULL, 0, NULL, NULL, NULL, NULL, data);
 }
@@ -394,8 +392,7 @@ static void mbm_gprs_deactivate_primary(struct ofono_gprs_context *gc,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -444,12 +441,16 @@ static int mbm_gprs_context_probe(struct ofono_gprs_context *gc,
 	struct gprs_context_data *gcd;
 
 	gcd = g_new0(struct gprs_context_data, 1);
-	gcd->chat = chat;
+	gcd->chat = g_at_chat_clone(chat);
 
 	ofono_gprs_context_set_data(gc, gcd);
 
-	g_at_chat_send(chat, "AT*E2NAP=1", none_prefix, mbm_e2nap_cb, gc, NULL);
-	g_at_chat_send(chat, "AT*E2IPCFG=?", e2ipcfg_prefix,
+	g_at_chat_send(gcd->chat, "AT*ENAPDBG=1", none_prefix,
+				NULL, NULL, NULL);
+
+	g_at_chat_send(gcd->chat, "AT*E2NAP=1", none_prefix,
+			mbm_e2nap_cb, gc, NULL);
+	g_at_chat_send(gcd->chat, "AT*E2IPCFG=?", e2ipcfg_prefix,
 			mbm_e2ipcfg_query_cb, gc, NULL);
 
 	return 0;
@@ -465,11 +466,13 @@ static void mbm_gprs_context_remove(struct ofono_gprs_context *gc)
 	}
 
 	ofono_gprs_context_set_data(gc, NULL);
+
+	g_at_chat_unref(gcd->chat);
 	g_free(gcd);
 }
 
 static struct ofono_gprs_context_driver driver = {
-	.name			= "mbm",
+	.name			= "mbmmodem",
 	.probe			= mbm_gprs_context_probe,
 	.remove			= mbm_gprs_context_remove,
 	.activate_primary	= mbm_gprs_activate_primary,

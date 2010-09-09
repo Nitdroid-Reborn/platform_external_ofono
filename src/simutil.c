@@ -1416,3 +1416,39 @@ gboolean sim_parse_2g_get_response(const unsigned char *response, int len,
 
 	return TRUE;
 }
+
+gboolean sim_ust_is_available(unsigned char *efust, unsigned char len,
+						enum sim_ust_service index)
+{
+	if (index >= len * 8u)
+		return FALSE;
+
+	return (efust[index / 8] >> (index % 8)) & 1;
+}
+
+gboolean sim_est_is_active(unsigned char *efest, unsigned char len,
+						enum sim_est_service index)
+{
+	if (index >= len * 8u)
+		return FALSE;
+
+	return (efest[index / 8] >> (index % 8)) & 1;
+}
+
+gboolean sim_sst_is_available(unsigned char *efsst, unsigned char len,
+						enum sim_sst_service index)
+{
+	if (index >= len * 4u)
+		return FALSE;
+
+	return (efsst[index / 4] >> ((index % 4) * 2)) & 1;
+}
+
+gboolean sim_sst_is_active(unsigned char *efsst, unsigned char len,
+						enum sim_sst_service index)
+{
+	if (index >= len * 4u)
+		return FALSE;
+
+	return (efsst[index / 4] >> (((index % 4) * 2) + 1)) & 1;
+}

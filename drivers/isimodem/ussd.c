@@ -135,11 +135,11 @@ static GIsiRequest *ussd_send(GIsiClient *client,
 	const uint8_t msg[] = {
 		SS_GSM_USSD_SEND_REQ,
 		SS_GSM_USSD_COMMAND,
-		0x01, /* subblock count */
+		0x01,		/* subblock count */
 		SS_GSM_USSD_STRING,
-		(4 + len + 3) & ~3, /* subblock length */
-		0x0f, /* DCS */
-		len, /* string length */
+		4 + len + 3,	/* subblock length */
+		0x0f,		/* DCS */
+		len,		/* string length */
 		/* USSD string goes here */
 	};
 
@@ -195,7 +195,7 @@ static void isi_cancel(struct ofono_ussd *ussd,
 	const unsigned char msg[] = {
 		SS_GSM_USSD_SEND_REQ,
 		SS_GSM_USSD_END,
-		0x00 /* subblock count */
+		0x00		/* subblock count */
 	};
 
 	if (!cbd)

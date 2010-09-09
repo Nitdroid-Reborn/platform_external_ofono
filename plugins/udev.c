@@ -24,6 +24,7 @@
 #endif
 
 #include <errno.h>
+#include <ctype.h>
 
 #include <libudev.h>
 
@@ -84,6 +85,15 @@ static const char *get_serial(struct udev_device *udev_device)
 			serial = udev_list_entry_get_value(entry);
 
 		entry = udev_list_entry_get_next(entry);
+	}
+
+	if (serial != NULL) {
+		unsigned int i, len = strlen(serial);
+
+		for (i = 0; i < len; i++) {
+			if (!isalnum(serial[i]))
+				return NULL;
+		}
 	}
 
 	return serial;
@@ -163,6 +173,8 @@ static void add_hso(struct ofono_modem *modem,
 	const char *app, *control, *network;
 	int registered;
 
+	DBG("modem %p", modem);
+
 	subsystem = udev_device_get_subsystem(udev_device);
 	if (subsystem == NULL)
 		return;
@@ -198,12 +210,66 @@ static void add_hso(struct ofono_modem *modem,
 	}
 }
 
+static void add_zte(struct ofono_modem *modem,
+					struct udev_device *udev_device)
+{
+	struct udev_list_entry *entry;
+	const char *devnode, *type;
+
+	int ppp, aux;
+
+	DBG("modem %p", modem);
+
+	ppp = ofono_modem_get_integer(modem, "ModemRegistered");
+	aux = ofono_modem_get_integer(modem, "AuxRegistered");
+
+	if (ppp && aux)
+		return;
+
+	entry = udev_device_get_properties_list_entry(udev_device);
+	while (entry) {
+		const char *name = udev_list_entry_get_name(entry);
+		type = udev_list_entry_get_value(entry);
+
+		if (g_str_equal(name, "OFONO_ZTE_TYPE") != TRUE) {
+			entry = udev_list_entry_get_next(entry);
+			continue;
+		}
+
+		if (g_str_equal(type, "modem") == TRUE) {
+			if (ppp != 0)
+				return;
+
+			devnode = udev_device_get_devnode(udev_device);
+			ofono_modem_set_string(modem, "Modem", devnode);
+			ppp = 1;
+			ofono_modem_set_integer(modem, "ModemRegistered", ppp);
+		} else if (g_str_equal(type, "aux") == TRUE) {
+			if (aux != 0)
+				return;
+
+			devnode = udev_device_get_devnode(udev_device);
+			ofono_modem_set_string(modem, "Aux", devnode);
+
+			aux = 1;
+			ofono_modem_set_integer(modem, "AuxRegistered", aux);
+		}
+
+		break;
+	}
+
+	if (ppp && aux)
+		ofono_modem_register(modem);
+}
+
 static void add_huawei(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	struct udev_list_entry *entry;
 	const char *devnode, *type;
 	int ppp, pcui;
+
+	DBG("modem %p", modem);
 
 	/*
 	 * Huawei dongles tend to break up their ports into:
@@ -219,7 +285,7 @@ static void add_huawei(struct ofono_modem *modem,
 	ppp = ofono_modem_get_integer(modem, "ModemRegistered");
 	pcui = ofono_modem_get_integer(modem, "PcuiRegistered");
 
-	if (ppp & pcui)
+	if (ppp && pcui)
 		return;
 
 	entry = udev_device_get_properties_list_entry(udev_device);
@@ -273,6 +339,8 @@ static void add_novatel(struct ofono_modem *modem,
 	struct udev_device *parent;
 	int registered;
 
+	DBG("modem %p", modem);
+
 	registered = ofono_modem_get_integer(modem, "Registered");
 	if (registered != 0)
 		return;
@@ -281,12 +349,44 @@ static void add_novatel(struct ofono_modem *modem,
 	parent = udev_device_get_parent(parent);
 	intfnum = udev_device_get_sysattr_value(parent, "bInterfaceNumber");
 
+	DBG("intfnum %s", intfnum);
+
 	if (g_strcmp0(intfnum, "00") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "PrimaryDevice", devnode);
 	} else if (g_strcmp0(intfnum, "01") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "SecondaryDevice", devnode);
+
+		ofono_modem_set_integer(modem, "Registered", 1);
+		ofono_modem_register(modem);
+	}
+}
+
+static void add_nokia(struct ofono_modem *modem,
+					struct udev_device *udev_device)
+{
+	const char *devnode, *intfnum;
+	struct udev_device *parent;
+	int registered;
+
+	DBG("modem %p", modem);
+
+	registered = ofono_modem_get_integer(modem, "Registered");
+	if (registered != 0)
+		return;
+
+	parent = udev_device_get_parent(udev_device);
+	intfnum = udev_device_get_sysattr_value(parent, "bInterfaceNumber");
+
+	DBG("intfnum %s", intfnum);
+
+	if (g_strcmp0(intfnum, "01") == 0) {
+		devnode = udev_device_get_devnode(udev_device);
+		ofono_modem_set_string(modem, "Modem", devnode);
+	} else if (g_strcmp0(intfnum, "03") == 0) {
+		devnode = udev_device_get_devnode(udev_device);
+		ofono_modem_set_string(modem, "Control", devnode);
 
 		ofono_modem_set_integer(modem, "Registered", 1);
 		ofono_modem_register(modem);
@@ -345,10 +445,14 @@ static void add_modem(struct udev_device *udev_device)
 		add_mbm(modem, udev_device);
 	else if (g_strcmp0(driver, "hso") == 0)
 		add_hso(modem, udev_device);
+	else if (g_strcmp0(driver, "zte") == 0)
+		add_zte(modem, udev_device);
 	else if (g_strcmp0(driver, "huawei") == 0)
 		add_huawei(modem, udev_device);
 	else if (g_strcmp0(driver, "novatel") == 0)
 		add_novatel(modem, udev_device);
+	else if (g_strcmp0(driver, "nokia") == 0)
+		add_nokia(modem, udev_device);
 }
 
 static gboolean devpath_remove(gpointer key, gpointer value, gpointer user_data)

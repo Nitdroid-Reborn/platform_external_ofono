@@ -580,6 +580,11 @@ static void cb_unregister_ss_controls(struct ofono_call_barring *cb)
 	__ofono_ussd_passwd_unregister(cb->ussd, "353");
 }
 
+gboolean __ofono_call_barring_is_busy(struct ofono_call_barring *cb)
+{
+	return cb->pending ? TRUE : FALSE;
+}
+
 static inline void cb_append_property(struct ofono_call_barring *cb,
 					DBusMessageIter *dict, int start,
 					int end, int cls, const char *property)
@@ -669,7 +674,7 @@ static DBusMessage *cb_get_properties(DBusConnection *conn, DBusMessage *msg,
 {
 	struct ofono_call_barring *cb = data;
 
-	if (cb->pending)
+	if (cb->pending || __ofono_ussd_is_busy(cb->ussd))
 		return __ofono_error_busy(msg);
 
 	if (!cb->driver->query)
@@ -822,7 +827,7 @@ static DBusMessage *cb_set_property(DBusConnection *conn, DBusMessage *msg,
 	int cls;
 	int mode;
 
-	if (cb->pending)
+	if (cb->pending || __ofono_ussd_is_busy(cb->ussd))
 		return __ofono_error_busy(msg);
 
 	if (!dbus_message_iter_init(msg, &iter))
@@ -894,7 +899,7 @@ static DBusMessage *cb_disable_all(DBusConnection *conn, DBusMessage *msg,
 	if (!cb->driver->set)
 		return __ofono_error_not_implemented(msg);
 
-	if (cb->pending)
+	if (cb->pending || __ofono_ussd_is_busy(cb->ussd))
 		return __ofono_error_busy(msg);
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &passwd,
@@ -941,7 +946,7 @@ static DBusMessage *cb_set_passwd(DBusConnection *conn, DBusMessage *msg,
 	if (!cb->driver->set_passwd)
 		return __ofono_error_not_implemented(msg);
 
-	if (cb->pending)
+	if (cb->pending || __ofono_ussd_is_busy(cb->ussd))
 		return __ofono_error_busy(msg);
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &old_passwd,

@@ -778,6 +778,11 @@ static void cs_unregister_ss_controls(struct ofono_call_settings *cs)
 		__ofono_ussd_ssc_unregister(cs->ussd, "77");
 }
 
+gboolean __ofono_call_settings_is_busy(struct ofono_call_settings *cs)
+{
+	return cs->pending ? TRUE : FALSE;
+}
+
 static DBusMessage *generate_get_properties_reply(struct ofono_call_settings *cs,
 							DBusMessage *msg)
 {
@@ -950,7 +955,7 @@ static DBusMessage *cs_get_properties(DBusConnection *conn, DBusMessage *msg,
 {
 	struct ofono_call_settings *cs = data;
 
-	if (cs->pending)
+	if (cs->pending || __ofono_ussd_is_busy(cs->ussd))
 		return __ofono_error_busy(msg);
 
 	if (cs->flags & CALL_SETTINGS_FLAG_CACHED)
@@ -1127,7 +1132,7 @@ static DBusMessage *cs_set_property(DBusConnection *conn, DBusMessage *msg,
 	const char *property;
 	int cls;
 
-	if (cs->pending)
+	if (cs->pending || __ofono_ussd_is_busy(cs->ussd))
 		return __ofono_error_busy(msg);
 
 	if (!dbus_message_iter_init(msg, &iter))

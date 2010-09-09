@@ -40,7 +40,8 @@ builtin_sources =
 builtin_libadd =
 builtin_cflags =
 
-gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/object.c gdbus/watch.c
+gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
+					gdbus/object.c gdbus/polkit.c
 
 gisi_sources = gisi/modem.h gisi/modem.c \
 			gisi/netlink.h gisi/netlink.c \
@@ -172,6 +173,12 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/nwmodem/nwmodem.c \
 			drivers/nwmodem/radio-settings.c
 
+builtin_modules += huaweimodem
+builtin_sources += drivers/atmodem/atutil.h \
+			drivers/huaweimodem/huaweimodem.h \
+			drivers/huaweimodem/huaweimodem.c \
+			drivers/huaweimodem/gprs-context.c
+
 builtin_modules += calypsomodem
 builtin_sources += drivers/atmodem/atutil.h \
 			drivers/calypsomodem/calypsomodem.h \
@@ -206,6 +213,7 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/stemodem/stemodem.h \
 			drivers/stemodem/stemodem.c \
 			drivers/stemodem/voicecall.c \
+			drivers/stemodem/radio-settings.c \
 			drivers/stemodem/gprs-context.c \
 			drivers/stemodem/caif_socket.h \
 			drivers/stemodem/if_caif.h
@@ -231,11 +239,17 @@ builtin_sources += plugins/mbm.c
 builtin_modules += hso
 builtin_sources += plugins/hso.c
 
+builtin_modules += zte
+builtin_sources += plugins/zte.c
+
 builtin_modules += huawei
 builtin_sources += plugins/huawei.c
 
 builtin_modules += novatel
 builtin_sources += plugins/novatel.c
+
+builtin_modules += nokia
+builtin_sources += plugins/nokia.c
 
 builtin_modules += bluetooth
 builtin_sources += plugins/bluetooth.c plugins/bluetooth.h
@@ -273,7 +287,8 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/storage.c src/cbs.c src/watch.c src/call-volume.c \
 			src/gprs.c src/idmap.h src/idmap.c \
 			src/radio-settings.c src/stkutil.h src/stkutil.c \
-			src/nettime.c src/stkagent.c src/stkagent.h
+			src/nettime.c src/stkagent.c src/stkagent.h \
+			src/simfs.c src/simfs.h
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -305,12 +320,16 @@ doc_files = doc/overview.txt doc/ofono-paper.txt \
 			doc/call-forwarding-api.txt doc/call-settings-api.txt \
 			doc/call-meter-api.txt \
 			doc/supplementaryservices-api.txt \
-			doc/dataconnectionmanager-api.txt
+			doc/connman-api.txt
 
-test_scripts = test/activate-context \
+test_scripts = test/backtrace \
 		test/create-context \
+		test/activate-context \
 		test/deactivate-context \
 		test/dial-number \
+		test/list-calls \
+		test/create-multiparty \
+		test/private-chat \
 		test/disable-modem \
 		test/enable-modem \
 		test/enter-pin \
@@ -318,6 +337,8 @@ test_scripts = test/activate-context \
 		test/list-contexts \
 		test/list-modems \
 		test/list-operators \
+		test/scan-for-operators \
+		test/get-operators\
 		test/monitor-ofono \
 		test/process-context-settings \
 		test/receive-sms \
@@ -325,7 +346,7 @@ test_scripts = test/activate-context \
 		test/send-sms \
 		test/set-mic-volume \
 		test/set-speaker-volume \
-		test/simple-agent \
+		test/test-stk-menu \
 		test/test-advice-of-charge \
 		test/test-call-barring \
 		test/test-call-forwarding \
@@ -337,8 +358,10 @@ test_scripts = test/activate-context \
 		test/test-ss-control-cb \
 		test/test-ss-control-cf \
 		test/test-ss-control-cs \
-		test/test-ussd \
 		test/test-voicecall \
+		test/test-ussd \
+		test/cancel-ussd \
+		test/initiate-ussd \
 		test/offline-modem \
 		test/online-modem \
 		test/get-tech-preference \
@@ -346,7 +369,6 @@ test_scripts = test/activate-context \
 		test/set-use-sms-reports \
 		test/set-cbs-topics \
 		test/enable-cbs \
-		test/propose-scan \
 		test/lock-pin \
 		test/unlock-pin
 

@@ -42,59 +42,58 @@
 #include "smsutil.h"
 #include "simutil.h"
 #include "storage.h"
-
-#define SIM_CACHE_MODE 0600
-#define SIM_CACHE_PATH STORAGEDIR "/%s-%i/%04x"
-#define SIM_CACHE_PATH_LEN(imsilen) (strlen(SIM_CACHE_PATH) - 3 + imsilen)
-#define SIM_CACHE_HEADER_SIZE 6
+#include "simfs.h"
 
 static GSList *g_drivers = NULL;
 
-static gboolean sim_op_next(gpointer user_data);
-static gboolean sim_op_retrieve_next(gpointer user);
 static void sim_own_numbers_update(struct ofono_sim *sim);
 static void sim_pin_check(struct ofono_sim *sim);
 static void sim_set_ready(struct ofono_sim *sim);
 
-struct sim_file_op {
-	int id;
-	gboolean cache;
-	enum ofono_sim_file_structure structure;
-	int length;
-	int record_length;
-	int current;
-	gconstpointer cb;
-	gboolean is_read;
-	void *buffer;
-	void *userdata;
-};
-
 struct ofono_sim {
+	/* Contents of the SIM file system, in rough initialization order */
 	char *iccid;
-	char *imsi;
-	enum ofono_sim_phase phase;
-	unsigned char mnc_length;
-	GSList *own_numbers;
-	GSList *new_numbers;
-	GSList *service_numbers;
-	gboolean sdn_ready;
-	enum ofono_sim_state state;
-	enum ofono_sim_password_type pin_type;
-	gboolean locked_pins[OFONO_SIM_PASSWORD_SIM_PUK]; /* Number of PINs */
+
 	char **language_prefs;
-	GQueue *simop_q;
-	gint simop_source;
-	unsigned char efmsisdn_length;
-	unsigned char efmsisdn_records;
 	unsigned char *efli;
 	unsigned char efli_length;
+
+	enum ofono_sim_password_type pin_type;
+	gboolean locked_pins[OFONO_SIM_PASSWORD_SIM_PUK]; /* Number of PINs */
+
+	enum ofono_sim_phase phase;
+	unsigned char mnc_length;
 	enum ofono_sim_cphs_phase cphs_phase;
 	unsigned char cphs_service_table[2];
+	unsigned char *efust;
+	unsigned char efust_length;
+	unsigned char *efest;
+	unsigned char efest_length;
+	unsigned char *efsst;
+	unsigned char efsst_length;
+
+	char *imsi;
+
+	GSList *own_numbers;
+	GSList *new_numbers;
+	unsigned char efmsisdn_length;
+	unsigned char efmsisdn_records;
+
+	GSList *service_numbers;
+	gboolean sdn_ready;
+
+	unsigned char *efimg;
+	unsigned short efimg_length;
+
+	enum ofono_sim_state state;
 	struct ofono_watchlist *state_watches;
+
+	struct sim_fs *simfs;
+
+	DBusMessage *pending;
 	const struct ofono_sim_driver *driver;
 	void *driver_data;
 	struct ofono_atom *atom;
-	DBusMessage *pending;
 };
 
 struct msisdn_set_request {
@@ -264,11 +263,6 @@ static char **get_service_numbers(GSList *service_numbers)
 	}
 
 	return ret;
-}
-
-static void sim_file_op_free(struct sim_file_op *node)
-{
-	g_free(node);
 }
 
 static void service_number_free(struct service_number *num)
@@ -868,53 +862,6 @@ check:
 	sim->new_numbers = NULL;
 }
 
-static void sim_ad_read_cb(int ok, int length, int record,
-				const unsigned char *data,
-				int record_length, void *userdata)
-{
-	struct ofono_sim *sim = userdata;
-	DBusConnection *conn = ofono_dbus_get_connection();
-	const char *path = __ofono_atom_get_path(sim->atom);
-	int new_mnc_length;
-	char mcc[OFONO_MAX_MCC_LENGTH + 1];
-	char mnc[OFONO_MAX_MNC_LENGTH + 1];
-	const char *str;
-
-	if (!ok)
-		return;
-
-	if (length < 4)
-		return;
-
-	new_mnc_length = data[3] & 0xf;
-
-	/* sanity check for potential invalid values */
-	if (new_mnc_length < 2 || new_mnc_length > 3)
-		return;
-
-	if (sim->mnc_length == new_mnc_length)
-		return;
-
-	sim->mnc_length = new_mnc_length;
-
-	strncpy(mcc, sim->imsi, OFONO_MAX_MCC_LENGTH);
-	mcc[OFONO_MAX_MCC_LENGTH] = '\0';
-	strncpy(mnc, sim->imsi + OFONO_MAX_MCC_LENGTH, sim->mnc_length);
-	mnc[sim->mnc_length] = '\0';
-
-	str = mcc;
-	ofono_dbus_signal_property_changed(conn, path,
-						OFONO_SIM_MANAGER_INTERFACE,
-						"MobileCountryCode",
-						DBUS_TYPE_STRING, &str);
-
-	str = mnc;
-	ofono_dbus_signal_property_changed(conn, path,
-						OFONO_SIM_MANAGER_INTERFACE,
-						"MobileNetworkCode",
-						DBUS_TYPE_STRING, &str);
-}
-
 static gint service_number_compare(gconstpointer a, gconstpointer b)
 {
 	const struct service_number *sdn = a;
@@ -1001,7 +948,48 @@ static void sim_own_numbers_update(struct ofono_sim *sim)
 			sim_msisdn_read_cb, sim);
 }
 
-static void sim_ready(void *user, enum ofono_sim_state new_state)
+static void sim_efimg_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+	unsigned char *efimg;
+	int num_records;
+
+	if (!ok)
+		return;
+
+	num_records = length / record_length;
+
+	/*
+	 * EFimg descriptors are 9 bytes long.
+	 * Byte 1 of the record is the number of descriptors per record.
+	 */
+	if ((record_length < 10) ||
+			((record_length % 9 != 2) && (record_length % 9 != 1)))
+		return;
+
+	if (sim->efimg == NULL) {
+		sim->efimg = g_try_malloc0(num_records * 9);
+
+		if (sim->efimg == NULL)
+			return;
+
+		sim->efimg_length = num_records * 9;
+	}
+
+	/*
+	 * TBD - if we have more than one descriptor per record,
+	 * pick the nicest one.  For now we use the first one.
+	 */
+
+	/* copy descriptor into slot for this record */
+	efimg = &sim->efimg[(record - 1) * 9];
+
+	memcpy(efimg, &data[1], 9);
+}
+
+static void sim_ready(enum ofono_sim_state new_state, void *user)
 {
 	struct ofono_sim *sim = user;
 
@@ -1010,33 +998,10 @@ static void sim_ready(void *user, enum ofono_sim_state new_state)
 
 	sim_own_numbers_update(sim);
 
-	ofono_sim_read(sim, SIM_EFAD_FILEID,
-			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-			sim_ad_read_cb, sim);
 	ofono_sim_read(sim, SIM_EFSDN_FILEID, OFONO_SIM_FILE_STRUCTURE_FIXED,
 			sim_sdn_read_cb, sim);
-}
-
-static void sim_cphs_information_read_cb(int ok, int length, int record,
-				const unsigned char *data,
-				int record_length, void *userdata)
-{
-	struct ofono_sim *sim = userdata;
-
-	sim->cphs_phase = OFONO_SIM_CPHS_PHASE_NONE;
-
-	if (!ok || length < 3)
-		goto ready;
-
-	if (data[0] == 0x01)
-		sim->cphs_phase = OFONO_SIM_CPHS_PHASE_1G;
-	else if (data[0] >= 0x02)
-		sim->cphs_phase = OFONO_SIM_CPHS_PHASE_2G;
-
-	memcpy(sim->cphs_service_table, data + 1, 2);
-
-ready:
-	sim_set_ready(sim);
+	ofono_sim_read(sim, SIM_EFIMG_FILEID, OFONO_SIM_FILE_STRUCTURE_FIXED,
+			sim_efimg_read_cb, sim);
 }
 
 static void sim_imsi_cb(const struct ofono_error *error, const char *imsi,
@@ -1058,11 +1023,30 @@ static void sim_imsi_cb(const struct ofono_error *error, const char *imsi,
 						"SubscriberIdentity",
 						DBUS_TYPE_STRING, &sim->imsi);
 
-	/* Read CPHS-support bits, this is still part of the SIM
-	 * initialisation but no order is specified for it.  */
-	ofono_sim_read(sim, SIM_EF_CPHS_INFORMATION_FILEID,
-			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-			sim_cphs_information_read_cb, sim);
+	if (sim->mnc_length) {
+		char mcc[OFONO_MAX_MCC_LENGTH + 1];
+		char mnc[OFONO_MAX_MNC_LENGTH + 1];
+		const char *str;
+
+		strncpy(mcc, sim->imsi, OFONO_MAX_MCC_LENGTH);
+		mcc[OFONO_MAX_MCC_LENGTH] = '\0';
+		strncpy(mnc, sim->imsi + OFONO_MAX_MCC_LENGTH, sim->mnc_length);
+		mnc[sim->mnc_length] = '\0';
+
+		str = mcc;
+		ofono_dbus_signal_property_changed(conn, path,
+						OFONO_SIM_MANAGER_INTERFACE,
+						"MobileCountryCode",
+						DBUS_TYPE_STRING, &str);
+
+		str = mnc;
+		ofono_dbus_signal_property_changed(conn, path,
+						OFONO_SIM_MANAGER_INTERFACE,
+						"MobileNetworkCode",
+						DBUS_TYPE_STRING, &str);
+	}
+
+	sim_set_ready(sim);
 }
 
 static void sim_retrieve_imsi(struct ofono_sim *sim)
@@ -1074,6 +1058,157 @@ static void sim_retrieve_imsi(struct ofono_sim *sim)
 	}
 
 	sim->driver->read_imsi(sim, sim_imsi_cb, sim);
+}
+
+static void sim_efsst_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	if (!ok)
+		goto out;
+
+	if (length < 2) {
+		ofono_error("EFsst shall contain at least two bytes");
+		goto out;
+	}
+
+	sim->efsst = g_memdup(data, length);
+	sim->efsst_length = length;
+
+out:
+	sim_retrieve_imsi(sim);
+}
+
+static void sim_efest_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	if (!ok)
+		goto out;
+
+	if (length < 1) {
+		ofono_error("EFest shall contain at least one byte");
+		goto out;
+	}
+
+	sim->efest = g_memdup(data, length);
+	sim->efest_length = length;
+
+out:
+	sim_retrieve_imsi(sim);
+}
+
+static void sim_efust_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	if (!ok)
+		goto out;
+
+	if (length < 1) {
+		ofono_error("EFust shall contain at least one byte");
+		goto out;
+	}
+
+	sim->efust = g_memdup(data, length);
+	sim->efust_length = length;
+
+	ofono_sim_read(sim, SIM_EFEST_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_efest_read_cb, sim);
+
+	return;
+
+out:
+	sim_retrieve_imsi(sim);
+}
+
+static void sim_cphs_information_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	sim->cphs_phase = OFONO_SIM_CPHS_PHASE_NONE;
+
+	if (!ok || length < 3)
+		return;
+
+	if (data[0] == 0x01)
+		sim->cphs_phase = OFONO_SIM_CPHS_PHASE_1G;
+	else if (data[0] >= 0x02)
+		sim->cphs_phase = OFONO_SIM_CPHS_PHASE_2G;
+
+	memcpy(sim->cphs_service_table, data + 1, 2);
+}
+
+static void sim_ad_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+	int new_mnc_length;
+
+	if (!ok)
+		return;
+
+	if (length < 4)
+		return;
+
+	new_mnc_length = data[3] & 0xf;
+
+	/* sanity check for potential invalid values */
+	if (new_mnc_length < 2 || new_mnc_length > 3)
+		return;
+
+	sim->mnc_length = new_mnc_length;
+}
+
+static void sim_efphase_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	if (!ok || length != 1)
+		sim->phase = OFONO_SIM_PHASE_3G;
+	else
+		sim->phase = data[0];
+}
+
+static void sim_initialize_after_pin(struct ofono_sim *sim)
+{
+	ofono_sim_read(sim, SIM_EFPHASE_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_efphase_read_cb, sim);
+
+	ofono_sim_read(sim, SIM_EFAD_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_ad_read_cb, sim);
+
+	/*
+	 * Read CPHS-support bits, this is still part of the SIM
+	 * initialisation but no order is specified for it.
+	 */
+	ofono_sim_read(sim, SIM_EF_CPHS_INFORMATION_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_cphs_information_read_cb, sim);
+
+	/* Also retrieve the GSM service table */
+	if (sim->phase >= OFONO_SIM_PHASE_3G)
+		ofono_sim_read(sim, SIM_EFUST_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				sim_efust_read_cb, sim);
+	else
+		ofono_sim_read(sim, SIM_EFSST_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				sim_efsst_read_cb, sim);
 }
 
 static void sim_pin_query_cb(const struct ofono_error *error,
@@ -1110,13 +1245,13 @@ static void sim_pin_query_cb(const struct ofono_error *error,
 
 checkdone:
 	if (pin_type == OFONO_SIM_PASSWORD_NONE)
-		sim_retrieve_imsi(sim);
+		sim_initialize_after_pin(sim);
 }
 
 static void sim_pin_check(struct ofono_sim *sim)
 {
 	if (!sim->driver->query_passwd_state) {
-		sim_retrieve_imsi(sim);
+		sim_initialize_after_pin(sim);
 		return;
 	}
 
@@ -1296,31 +1431,14 @@ skip_efpl:
 		g_slist_free(efpl);
 	}
 
-	if (sim->language_prefs == NULL)
-		return;
-
-	ofono_dbus_signal_array_property_changed(conn, path,
+	if (sim->language_prefs != NULL)
+		ofono_dbus_signal_array_property_changed(conn, path,
 						OFONO_SIM_MANAGER_INTERFACE,
 						"PreferredLanguages",
 						DBUS_TYPE_STRING,
 						&sim->language_prefs);
-}
 
-static void sim_retrieve_efli_and_efpl(struct ofono_sim *sim)
-{
-	/* According to 31.102 the EFli is read first and EFpl is then
-	 * only read if none of the EFli languages are supported by user
-	 * interface.  51.011 mandates the exact opposite, making EFpl/EFelp
-	 * preferred over EFlp (same EFid as EFli, different format).
-	 * However we don't depend on the user interface and so
-	 * need to read both files now.
-	 */
-	ofono_sim_read(sim, SIM_EFLI_FILEID,
-			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-			sim_efli_read_cb, sim);
-	ofono_sim_read(sim, SIM_EFPL_FILEID,
-			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-			sim_efpl_read_cb, sim);
+	sim_pin_check(sim);
 }
 
 static void sim_iccid_read_cb(int ok, int length, int record,
@@ -1346,36 +1464,6 @@ static void sim_iccid_read_cb(int ok, int length, int record,
 						&sim->iccid);
 }
 
-static void sim_efphase_read_cb(const struct ofono_error *error,
-				const unsigned char *data, int len, void *user)
-{
-	struct ofono_sim *sim = user;
-
-	if (!error || error->type != OFONO_ERROR_TYPE_NO_ERROR || len != 1)
-		sim->phase = OFONO_SIM_PHASE_3G;
-	else
-		sim->phase = data[0];
-
-	/* Proceed with SIM initialization */
-	ofono_sim_read(sim, SIM_EF_ICCID_FILEID,
-			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-			sim_iccid_read_cb, sim);
-
-	sim_retrieve_efli_and_efpl(sim);
-	sim_pin_check(sim);
-}
-
-static void sim_determine_phase(struct ofono_sim *sim)
-{
-	if (!sim->driver->read_file_transparent) {
-		sim_efphase_read_cb(NULL, NULL, 0, sim);
-		return;
-	}
-
-	sim->driver->read_file_transparent(sim, SIM_EFPHASE_FILEID, 0, 1,
-						sim_efphase_read_cb, sim);
-}
-
 static void sim_initialize(struct ofono_sim *sim)
 {
 	/* Perform SIM initialization according to 3GPP 31.102 Section 5.1.1.2
@@ -1384,406 +1472,69 @@ static void sim_initialize(struct ofono_sim *sim)
 	 * responsible for checking the PIN, reading the IMSI and signaling
 	 * SIM ready condition.
 	 *
-	 * The procedure according to 31.102 is roughly:
+	 * The procedure according to 31.102, 51.011, 11.11 and CPHS 4.2 is
+	 * roughly:
+	 *
 	 * Read EFecc
 	 * Read EFli and EFpl
 	 * SIM Pin check
 	 * Request SIM phase (only in 51.011)
-	 * Read EFust
-	 * Read EFest
+	 * Administrative information request (read EFad)
+	 * Request CPHS Information (only in CPHS 4.2)
+	 * Read EFsst (only in 11.11 & 51.011)
+	 * Read EFust (only in 31.102)
+	 * Read EFest (only in 31.102)
 	 * Read IMSI
 	 *
 	 * At this point we signal the SIM ready condition and allow
 	 * arbitrary files to be written or read, assuming their presence
 	 * in the EFust
 	 */
-	sim_determine_phase(sim);
+
+	/* Grab the EFiccid which is always available */
+	ofono_sim_read(sim, SIM_EF_ICCID_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_iccid_read_cb, sim);
+
+	/* EFecc is read by the voicecall atom */
+
+	/* According to 31.102 the EFli is read first and EFpl is then
+	 * only read if none of the EFli languages are supported by user
+	 * interface.  51.011 mandates the exact opposite, making EFpl/EFelp
+	 * preferred over EFlp (same EFid as EFli, different format).
+	 * However we don't depend on the user interface and so
+	 * need to read both files now.
+	 */
+	ofono_sim_read(sim, SIM_EFLI_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_efli_read_cb, sim);
+	ofono_sim_read(sim, SIM_EFPL_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_efpl_read_cb, sim);
 }
 
-static void sim_op_error(struct ofono_sim *sim)
+int ofono_sim_read_bytes(struct ofono_sim *sim, int id,
+			unsigned short offset, unsigned short num_bytes,
+			ofono_sim_file_read_cb_t cb, void *data)
 {
-	struct sim_file_op *op = g_queue_pop_head(sim->simop_q);
+	if (sim == NULL)
+		return -1;
 
-	if (g_queue_get_length(sim->simop_q) > 0)
-		sim->simop_source = g_timeout_add(0, sim_op_next, sim);
+	if (num_bytes == 0)
+		return -1;
 
-	if (op->is_read == TRUE)
-		((ofono_sim_file_read_cb_t) op->cb)
-			(0, 0, 0, 0, 0, op->userdata);
-	else
-		((ofono_sim_file_write_cb_t) op->cb)
-			(0, op->userdata);
-
-	sim_file_op_free(op);
-}
-
-static gboolean cache_record(const char *path, int current, int record_len,
-				const unsigned char *data)
-{
-	int r = 0;
-	int fd;
-
-	fd = TFR(open(path, O_WRONLY));
-
-	if (fd == -1)
-		return FALSE;
-
-	if (lseek(fd, (current - 1) * record_len +
-				SIM_CACHE_HEADER_SIZE, SEEK_SET) != (off_t) -1)
-		r = TFR(write(fd, data, record_len));
-
-	TFR(close(fd));
-
-	if (r < record_len) {
-		unlink(path);
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
-static void sim_op_retrieve_cb(const struct ofono_error *error,
-				const unsigned char *data, int len, void *user)
-{
-	struct ofono_sim *sim = user;
-	struct sim_file_op *op = g_queue_peek_head(sim->simop_q);
-	int total = op->length / op->record_length;
-	ofono_sim_file_read_cb_t cb = op->cb;
-	char *imsi = sim->imsi;
-
-	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
-		sim_op_error(sim);
-		return;
-	}
-
-	cb(1, op->length, op->current, data, op->record_length, op->userdata);
-
-	if (op->cache && imsi) {
-		char *path = g_strdup_printf(SIM_CACHE_PATH,
-						imsi, sim->phase, op->id);
-
-		op->cache = cache_record(path, op->current, op->record_length,
-						data);
-		g_free(path);
-	}
-
-	if (op->current == total) {
-		op = g_queue_pop_head(sim->simop_q);
-
-		sim_file_op_free(op);
-
-		if (g_queue_get_length(sim->simop_q) > 0)
-			sim->simop_source = g_timeout_add(0, sim_op_next, sim);
-	} else {
-		op->current += 1;
-		sim->simop_source = g_timeout_add(0, sim_op_retrieve_next, sim);
-	}
-}
-
-static gboolean sim_op_retrieve_next(gpointer user)
-{
-	struct ofono_sim *sim = user;
-	struct sim_file_op *op = g_queue_peek_head(sim->simop_q);
-
-	sim->simop_source = 0;
-
-	switch (op->structure) {
-	case OFONO_SIM_FILE_STRUCTURE_TRANSPARENT:
-		if (!sim->driver->read_file_transparent) {
-			sim_op_error(sim);
-			return FALSE;
-		}
-
-		sim->driver->read_file_transparent(sim, op->id, 0, op->length,
-						sim_op_retrieve_cb, sim);
-		break;
-	case OFONO_SIM_FILE_STRUCTURE_FIXED:
-		if (!sim->driver->read_file_linear) {
-			sim_op_error(sim);
-			return FALSE;
-		}
-
-		sim->driver->read_file_linear(sim, op->id, op->current,
-						op->record_length,
-						sim_op_retrieve_cb, sim);
-		break;
-	case OFONO_SIM_FILE_STRUCTURE_CYCLIC:
-		if (!sim->driver->read_file_cyclic) {
-			sim_op_error(sim);
-			return FALSE;
-		}
-
-		sim->driver->read_file_cyclic(sim, op->id, op->current,
-						op->record_length,
-						sim_op_retrieve_cb, sim);
-		break;
-	default:
-		ofono_error("Unrecognized file structure, this can't happen");
-	}
-
-	return FALSE;
-}
-
-static void sim_op_info_cb(const struct ofono_error *error, int length,
-				enum ofono_sim_file_structure structure,
-				int record_length,
-				const unsigned char access[3], void *data)
-{
-	struct ofono_sim *sim = data;
-	struct sim_file_op *op = g_queue_peek_head(sim->simop_q);
-	char *imsi = sim->imsi;
-	enum sim_file_access update;
-	enum sim_file_access invalidate;
-	enum sim_file_access rehabilitate;
-
-	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
-		sim_op_error(sim);
-		return;
-	}
-
-	if (structure != op->structure) {
-		ofono_error("Requested file structure differs from SIM: %x",
-				op->id);
-		sim_op_error(sim);
-		return;
-	}
-
-	/* TS 11.11, Section 9.3 */
-	update = file_access_condition_decode(access[0] & 0xf);
-	rehabilitate = file_access_condition_decode((access[2] >> 4) & 0xf);
-	invalidate = file_access_condition_decode(access[2] & 0xf);
-
-	op->structure = structure;
-	op->length = length;
-	/* Never cache card holder writable files */
-	op->cache = (update == SIM_FILE_ACCESS_ADM ||
-			update == SIM_FILE_ACCESS_NEVER) &&
-			(invalidate == SIM_FILE_ACCESS_ADM ||
-				invalidate == SIM_FILE_ACCESS_NEVER) &&
-			(rehabilitate == SIM_FILE_ACCESS_ADM ||
-				rehabilitate == SIM_FILE_ACCESS_NEVER);
-
-	if (structure == OFONO_SIM_FILE_STRUCTURE_TRANSPARENT)
-		op->record_length = length;
-	else
-		op->record_length = record_length;
-
-	op->current = 1;
-
-	sim->simop_source = g_timeout_add(0, sim_op_retrieve_next, sim);
-
-	if (op->cache && imsi) {
-		unsigned char fileinfo[6];
-
-		fileinfo[0] = error->type;
-		fileinfo[1] = length >> 8;
-		fileinfo[2] = length & 0xff;
-		fileinfo[3] = structure;
-		fileinfo[4] = record_length >> 8;
-		fileinfo[5] = record_length & 0xff;
-
-		if (write_file(fileinfo, 6, SIM_CACHE_MODE, SIM_CACHE_PATH,
-					imsi, sim->phase, op->id) != 6)
-			op->cache = FALSE;
-	}
-}
-
-static void sim_op_write_cb(const struct ofono_error *error, void *data)
-{
-	struct ofono_sim *sim = data;
-	struct sim_file_op *op = g_queue_pop_head(sim->simop_q);
-	ofono_sim_file_write_cb_t cb = op->cb;
-
-	if (g_queue_get_length(sim->simop_q) > 0)
-		sim->simop_source = g_timeout_add(0, sim_op_next, sim);
-
-	if (error->type == OFONO_ERROR_TYPE_NO_ERROR)
-		cb(1, op->userdata);
-	else
-		cb(0, op->userdata);
-
-	sim_file_op_free(op);
-}
-
-static gboolean sim_op_check_cached(struct ofono_sim *sim)
-{
-	char *imsi = sim->imsi;
-	struct sim_file_op *op = g_queue_peek_head(sim->simop_q);
-	ofono_sim_file_read_cb_t cb = op->cb;
-	char *path;
-	int fd;
-	unsigned char fileinfo[SIM_CACHE_HEADER_SIZE];
-	ssize_t len;
-	int error_type;
-	unsigned int file_length;
-	enum ofono_sim_file_structure structure;
-	unsigned int record_length;
-	unsigned int record;
-	guint8 *buffer = NULL;
-	gboolean ret = FALSE;
-
-	if (!imsi)
-		return FALSE;
-
-	path = g_strdup_printf(SIM_CACHE_PATH, imsi, sim->phase, op->id);
-
-	if (path == NULL)
-		return FALSE;
-
-	fd = TFR(open(path, O_RDONLY));
-	g_free(path);
-
-	if (fd == -1) {
-		if (errno != ENOENT)
-			DBG("Error %i opening cache file for "
-					"fileid %04x, IMSI %s",
-					errno, op->id, imsi);
-
-		return FALSE;
-	}
-
-	len = TFR(read(fd, fileinfo, SIM_CACHE_HEADER_SIZE));
-
-	if (len != SIM_CACHE_HEADER_SIZE)
-		goto cleanup;
-
-	error_type = fileinfo[0];
-	file_length = (fileinfo[1] << 8) | fileinfo[2];
-	structure = fileinfo[3];
-	record_length = (fileinfo[4] << 8) | fileinfo[5];
-
-	if (structure == OFONO_SIM_FILE_STRUCTURE_TRANSPARENT)
-		record_length = file_length;
-
-	if (record_length == 0 || file_length < record_length)
-		goto cleanup;
-
-	if (error_type != OFONO_ERROR_TYPE_NO_ERROR ||
-			structure != op->structure) {
-		ret = TRUE;
-		cb(0, 0, 0, 0, 0, op->userdata);
-		goto cleanup;
-	}
-
-	buffer = g_try_malloc(file_length);
-
-	if (buffer == NULL)
-		goto cleanup;
-
-	len = TFR(read(fd, buffer, file_length));
-
-	if (len < (ssize_t)file_length)
-		goto cleanup;
-
-	for (record = 0; record < file_length / record_length; record++) {
-		cb(1, file_length, record + 1, &buffer[record * record_length],
-			record_length, op->userdata);
-	}
-
-	ret = TRUE;
-
-cleanup:
-	if (buffer)
-		g_free(buffer);
-
-	TFR(close(fd));
-
-	return ret;
-}
-
-static gboolean sim_op_next(gpointer user_data)
-{
-	struct ofono_sim *sim = user_data;
-	struct sim_file_op *op;
-
-	sim->simop_source = 0;
-
-	if (!sim->simop_q)
-		return FALSE;
-
-	op = g_queue_peek_head(sim->simop_q);
-
-	if (op->is_read == TRUE) {
-		if (sim_op_check_cached(sim)) {
-			op = g_queue_pop_head(sim->simop_q);
-
-			sim_file_op_free(op);
-
-			if (g_queue_get_length(sim->simop_q) > 0)
-				sim->simop_source =
-					g_timeout_add(0, sim_op_next, sim);
-
-			return FALSE;
-		}
-
-		sim->driver->read_file_info(sim, op->id, sim_op_info_cb, sim);
-	} else {
-		switch (op->structure) {
-		case OFONO_SIM_FILE_STRUCTURE_TRANSPARENT:
-			sim->driver->write_file_transparent(sim, op->id, 0,
-					op->length, op->buffer,
-					sim_op_write_cb, sim);
-			break;
-		case OFONO_SIM_FILE_STRUCTURE_FIXED:
-			sim->driver->write_file_linear(sim, op->id, op->current,
-					op->length, op->buffer,
-					sim_op_write_cb, sim);
-			break;
-		case OFONO_SIM_FILE_STRUCTURE_CYCLIC:
-			sim->driver->write_file_cyclic(sim, op->id,
-					op->length, op->buffer,
-					sim_op_write_cb, sim);
-			break;
-		default:
-			ofono_error("Unrecognized file structure, "
-					"this can't happen");
-		}
-
-		g_free(op->buffer);
-	}
-
-	return FALSE;
+	return sim_fs_read(sim->simfs, id, OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				offset, num_bytes, cb, data);
 }
 
 int ofono_sim_read(struct ofono_sim *sim, int id,
 			enum ofono_sim_file_structure expected_type,
 			ofono_sim_file_read_cb_t cb, void *data)
 {
-	struct sim_file_op *op;
-
-	if (!cb)
-		return -1;
-
 	if (sim == NULL)
 		return -1;
 
-	if (!sim->driver)
-		return -1;
-
-	if (!sim->driver->read_file_info)
-		return -1;
-
-	/* TODO: We must first check the EFust table to see whether
-	 * this file can be read at all
-	 */
-
-	if (!sim->simop_q)
-		sim->simop_q = g_queue_new();
-
-	op = g_new0(struct sim_file_op, 1);
-
-	op->id = id;
-	op->structure = expected_type;
-	op->cb = cb;
-	op->userdata = data;
-	op->is_read = TRUE;
-
-	g_queue_push_tail(sim->simop_q, op);
-
-	if (g_queue_get_length(sim->simop_q) == 1)
-		sim->simop_source = g_timeout_add(0, sim_op_next, sim);
-
-	return 0;
+	return sim_fs_read(sim->simfs, id, expected_type, 0, 0, cb, data);
 }
 
 int ofono_sim_write(struct ofono_sim *sim, int id,
@@ -1791,55 +1542,11 @@ int ofono_sim_write(struct ofono_sim *sim, int id,
 			enum ofono_sim_file_structure structure, int record,
 			const unsigned char *data, int length, void *userdata)
 {
-	struct sim_file_op *op;
-	gconstpointer fn = NULL;
-
-	if (!cb)
-		return -1;
-
 	if (sim == NULL)
 		return -1;
 
-	if (!sim->driver)
-		return -1;
-
-	switch (structure) {
-	case OFONO_SIM_FILE_STRUCTURE_TRANSPARENT:
-		fn = sim->driver->write_file_transparent;
-		break;
-	case OFONO_SIM_FILE_STRUCTURE_FIXED:
-		fn = sim->driver->write_file_linear;
-		break;
-	case OFONO_SIM_FILE_STRUCTURE_CYCLIC:
-		fn = sim->driver->write_file_cyclic;
-		break;
-	default:
-		ofono_error("Unrecognized file structure, this can't happen");
-	}
-
-	if (fn == NULL)
-		return -1;
-
-	if (!sim->simop_q)
-		sim->simop_q = g_queue_new();
-
-	op = g_new0(struct sim_file_op, 1);
-
-	op->id = id;
-	op->cb = cb;
-	op->userdata = userdata;
-	op->is_read = FALSE;
-	op->buffer = g_memdup(data, length);
-	op->structure = structure;
-	op->length = length;
-	op->current = record;
-
-	g_queue_push_tail(sim->simop_q, op);
-
-	if (g_queue_get_length(sim->simop_q) == 1)
-		sim->simop_source = g_timeout_add(0, sim_op_next, sim);
-
-	return 0;
+	return sim_fs_write(sim->simfs, id, cb, structure, record, data, length,
+				userdata);
 }
 
 const char *ofono_sim_get_imsi(struct ofono_sim *sim)
@@ -1888,17 +1595,9 @@ static void sim_inserted_update(struct ofono_sim *sim)
 
 static void sim_free_state(struct ofono_sim *sim)
 {
-	if (sim->simop_source) {
-		g_source_remove(sim->simop_source);
-		sim->simop_source = 0;
-	}
-
-	if (sim->simop_q) {
-		/* Note: users of ofono_sim_read/write must not assume that
-		 * the callback happens for operations still in progress.  */
-		g_queue_foreach(sim->simop_q, (GFunc)sim_file_op_free, NULL);
-		g_queue_free(sim->simop_q);
-		sim->simop_q = NULL;
+	if (sim->simfs) {
+		sim_fs_free(sim->simfs);
+		sim->simfs = NULL;
 	}
 
 	if (sim->iccid) {
@@ -1934,11 +1633,37 @@ static void sim_free_state(struct ofono_sim *sim)
 		g_strfreev(sim->language_prefs);
 		sim->language_prefs = NULL;
 	}
+
+	if (sim->efust) {
+		g_free(sim->efust);
+		sim->efust = NULL;
+		sim->efust_length = 0;
+	}
+
+	if (sim->efest) {
+		g_free(sim->efest);
+		sim->efest = NULL;
+		sim->efest_length = 0;
+	}
+
+	if (sim->efsst) {
+		g_free(sim->efsst);
+		sim->efsst = NULL;
+		sim->efsst_length = 0;
+	}
+
+	sim->mnc_length = 0;
+
+	if (sim->efimg) {
+		g_free(sim->efimg);
+		sim->efimg = NULL;
+		sim->efimg_length = 0;
+	}
 }
 
 void ofono_sim_inserted_notify(struct ofono_sim *sim, ofono_bool_t inserted)
 {
-	ofono_sim_state_event_notify_cb_t notify;
+	ofono_sim_state_event_cb_t notify;
 	GSList *l;
 
 	if (inserted == TRUE && sim->state == OFONO_SIM_STATE_NOT_PRESENT)
@@ -1957,7 +1682,7 @@ void ofono_sim_inserted_notify(struct ofono_sim *sim, ofono_bool_t inserted)
 		struct ofono_watchlist_item *item = l->data;
 		notify = item->notify;
 
-		notify(item->notify_data, sim->state);
+		notify(sim->state, item->notify_data);
 	}
 
 	if (inserted)
@@ -1967,8 +1692,8 @@ void ofono_sim_inserted_notify(struct ofono_sim *sim, ofono_bool_t inserted)
 }
 
 unsigned int ofono_sim_add_state_watch(struct ofono_sim *sim,
-				ofono_sim_state_event_notify_cb_t notify,
-				void *data, ofono_destroy_func destroy)
+					ofono_sim_state_event_cb_t notify,
+					void *data, ofono_destroy_func destroy)
 {
 	struct ofono_watchlist_item *item;
 
@@ -2005,7 +1730,7 @@ enum ofono_sim_state ofono_sim_get_state(struct ofono_sim *sim)
 static void sim_set_ready(struct ofono_sim *sim)
 {
 	GSList *l;
-	ofono_sim_state_event_notify_cb_t notify;
+	ofono_sim_state_event_cb_t notify;
 
 	if (sim == NULL)
 		return;
@@ -2015,11 +1740,13 @@ static void sim_set_ready(struct ofono_sim *sim)
 
 	sim->state = OFONO_SIM_STATE_READY;
 
+	sim_fs_check_version(sim->simfs);
+
 	for (l = sim->state_watches->items; l; l = l->next) {
 		struct ofono_watchlist_item *item = l->data;
 		notify = item->notify;
 
-		notify(item->notify_data, sim->state);
+		notify(sim->state, item->notify_data);
 	}
 }
 
@@ -2127,6 +1854,7 @@ void ofono_sim_register(struct ofono_sim *sim)
 
 	ofono_modem_add_interface(modem, OFONO_SIM_MANAGER_INTERFACE);
 	sim->state_watches = __ofono_watchlist_new(g_free);
+	sim->simfs = sim_fs_new(sim, sim->driver);
 
 	__ofono_atom_register(sim->atom, sim_unregister);
 

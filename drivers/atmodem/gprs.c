@@ -78,8 +78,7 @@ static void at_gprs_set_attached(struct ofono_gprs *gprs, int attached,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -136,8 +135,7 @@ static void at_gprs_registration_status(struct ofono_gprs *gprs,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, -1, data);
 }
@@ -229,13 +227,23 @@ static void at_cgreg_test_cb(gboolean ok, GAtResult *result,
 	g_at_chat_send(gd->chat, cmd, none_prefix, NULL, NULL, NULL);
 	g_at_chat_send(gd->chat, "AT+CGAUTO=0", none_prefix, NULL, NULL, NULL);
 
-	/* ST-E modem does not support AT+CGEREP = 2,1 */
-	if (gd->vendor == OFONO_VENDOR_STE)
+	switch (gd->vendor) {
+	case OFONO_VENDOR_MBM:
+		/* Ericsson MBM and ST-E modems don't support AT+CGEREP=2,1 */
 		g_at_chat_send(gd->chat, "AT+CGEREP=1,0", none_prefix,
 			gprs_initialized, gprs, NULL);
-	else
+		break;
+	case OFONO_VENDOR_NOKIA:
+		/* Nokia data cards don't support AT+CGEREP=1,0 either */
+		g_at_chat_send(gd->chat, "AT+CGEREP=1", none_prefix,
+			gprs_initialized, gprs, NULL);
+		break;
+	default:
 		g_at_chat_send(gd->chat, "AT+CGEREP=2,1", none_prefix,
 			gprs_initialized, gprs, NULL);
+		break;
+	}
+
 	return;
 
 error:

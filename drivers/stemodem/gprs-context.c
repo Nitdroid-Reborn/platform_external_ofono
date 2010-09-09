@@ -154,7 +154,7 @@ static gint conn_compare_by_cid(gconstpointer a, gconstpointer b)
 }
 
 static struct conn_info *conn_info_create(unsigned int device,
-					  unsigned int channel_id)
+						unsigned int channel_id)
 {
 	struct conn_info *connection = g_try_new0(struct conn_info, 1);
 
@@ -352,8 +352,7 @@ static void ste_cgdcont_cb(gboolean ok, GAtResult *result, gpointer user_data)
 		return;
 
 error:
-	if (ncbd)
-		g_free(ncbd);
+	g_free(ncbd);
 
 	gcd->active_context = 0;
 
@@ -399,8 +398,7 @@ static void ste_gprs_activate_primary(struct ofono_gprs_context *gc,
 	return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, NULL, 0, NULL, NULL, NULL, NULL, data);
 }
@@ -439,8 +437,7 @@ static void ste_gprs_deactivate_primary(struct ofono_gprs_context *gc,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -512,7 +509,7 @@ static int ste_gprs_context_probe(struct ofono_gprs_context *gc,
 	int i;
 
 	gcd = g_new0(struct gprs_context_data, 1);
-	gcd->chat = chat;
+	gcd->chat = g_at_chat_clone(chat);
 
 	g_at_chat_register(gcd->chat, "+CGEV:", cgev_notify, FALSE, gc, NULL);
 
@@ -536,6 +533,8 @@ static void ste_gprs_context_remove(struct ofono_gprs_context *gc)
 	g_caif_devices = NULL;
 
 	ofono_gprs_context_set_data(gc, NULL);
+
+	g_at_chat_unref(gcd->chat);
 	g_free(gcd);
 }
 

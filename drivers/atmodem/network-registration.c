@@ -220,8 +220,7 @@ static void at_registration_status(struct ofono_netreg *netreg,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, -1, -1, -1, -1, data);
 }
@@ -354,19 +353,30 @@ static void at_current_operator(struct ofono_netreg *netreg,
 
 	cbd->user = netreg;
 
-	ok = g_at_chat_send(nd->chat, "AT+COPS=3,2", none_prefix,
-				NULL, NULL, NULL);
+	/* Nokia modems have a broken return value for the string
+	 * returned for the numeric value. It misses a " at the end.
+	 * Trying to read this will stall the parser. So skip it. */
+	if (nd->vendor == OFONO_VENDOR_NOKIA) {
+		ok = g_at_chat_send(nd->chat, "AT+COPS=3,0", none_prefix,
+							NULL, NULL, NULL);
 
-	if (ok)
-		ok = g_at_chat_send(nd->chat, "AT+COPS?", cops_prefix,
-					cops_numeric_cb, cbd, NULL);
+		if (ok)
+			ok = g_at_chat_send(nd->chat, "AT+COPS?", cops_prefix,
+							cops_cb, cbd, NULL);
+	} else {
+		ok = g_at_chat_send(nd->chat, "AT+COPS=3,2", none_prefix,
+							NULL, NULL, NULL);
+
+		if (ok)
+			ok = g_at_chat_send(nd->chat, "AT+COPS?", cops_prefix,
+						cops_numeric_cb, cbd, NULL);
+	}
 
 	if (ok)
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, NULL, data);
 }
@@ -486,8 +496,7 @@ static void at_list_operators(struct ofono_netreg *netreg,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, 0, NULL, data);
 }
@@ -517,8 +526,7 @@ static void at_register_auto(struct ofono_netreg *netreg,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -541,8 +549,7 @@ static void at_register_manual(struct ofono_netreg *netreg,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -561,8 +568,7 @@ static void at_deregister(struct ofono_netreg *netreg,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -758,8 +764,7 @@ static void at_signal_strength(struct ofono_netreg *netreg,
 	}
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, -1, data);
 }
@@ -998,8 +1003,15 @@ static void at_creg_set_cb(gboolean ok, GAtResult *result, gpointer user_data)
 				NULL, NULL, NULL);
 		break;
 	case OFONO_VENDOR_MBM:
+		g_at_chat_send(nd->chat, "AT*E2REG=1", none_prefix,
+					NULL, NULL, NULL);
+		g_at_chat_send(nd->chat, "AT*EREG=2", none_prefix,
+					NULL, NULL, NULL);
+		g_at_chat_send(nd->chat, "AT*EPSB=1", none_prefix,
+					NULL, NULL, NULL);
+
 		g_at_chat_send(nd->chat, "AT*ERINFO=1", none_prefix,
-				NULL, NULL, NULL);
+					NULL, NULL, NULL);
 		g_at_chat_register(nd->chat, "*ERINFO:", mbm_erinfo_notify,
 					FALSE, netreg, NULL);
 		g_at_chat_send(nd->chat, "AT+CIND=?", cind_prefix,
@@ -1017,6 +1029,10 @@ static void at_creg_set_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	case OFONO_VENDOR_HUAWEI:
 		g_at_chat_register(nd->chat, "^RSSI:", huawei_rssi_notify,
 					FALSE, netreg, NULL);
+		break;
+	case OFONO_VENDOR_ZTE:
+	case OFONO_VENDOR_NOKIA:
+		/* Signal strength reporting via CIND is not supported */
 		break;
 	default:
 		g_at_chat_send(nd->chat, "AT+CIND=?", cind_prefix,

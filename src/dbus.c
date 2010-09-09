@@ -300,7 +300,7 @@ DBusMessage *__ofono_error_not_supported(DBusMessage *msg)
 
 DBusMessage *__ofono_error_not_available(DBusMessage *msg)
 {
-	return g_dbus_create_error(msg, DBUS_GSM_ERROR_INTERFACE,
+	return g_dbus_create_error(msg, DBUS_GSM_ERROR_INTERFACE
 					".NotAvailable",
 					"Operation currently not available");
 }
@@ -334,6 +334,12 @@ DBusMessage *__ofono_error_attach_in_progress(DBusMessage *msg)
 	return g_dbus_create_error(msg,
 				DBUS_GSM_ERROR_INTERFACE ".AttachInProgress",
 				"GPRS Attach is in progress");
+}
+
+DBusMessage *__ofono_error_canceled(DBusMessage *msg)
+{
+	return g_dbus_create_error(msg, DBUS_GSM_ERROR_INTERFACE ".Canceled",
+					"Operation has been canceled");
 }
 
 void __ofono_dbus_pending_reply(DBusMessage **msg, DBusMessage *reply)

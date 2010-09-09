@@ -33,6 +33,7 @@
 #include <ofono/log.h>
 #include <ofono/modem.h>
 #include <ofono/voicecall.h>
+#include "vendor.h"
 
 #include "gatchat.h"
 #include "gatresult.h"
@@ -56,6 +57,7 @@ struct voicecall_data {
 	unsigned int local_release;
 	unsigned int clcc_source;
 	GAtChat *chat;
+	unsigned int vendor;
 };
 
 struct release_id_req {
@@ -115,6 +117,10 @@ static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
 	call->clip_validity = clip;
 
 	d->calls = g_slist_insert_sorted(d->calls, call, at_util_call_compare);
+
+	if (d->vendor == OFONO_VENDOR_HUAWEI)
+		g_at_chat_send(d->chat, "AT^DDSETEX=2", none_prefix,
+							NULL, NULL, NULL);
 
 	return call;
 }
@@ -368,8 +374,7 @@ static void at_dial(struct ofono_voicecall *vc,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -394,8 +399,7 @@ static void at_template(const char *cmd, struct ofono_voicecall *vc,
 		return;
 
 error:
-	if (req)
-		g_free(req);
+	g_free(req);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -477,8 +481,7 @@ static void at_release_specific(struct ofono_voicecall *vc, int id,
 		return;
 
 error:
-	if (req)
-		g_free(req);
+	g_free(req);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -567,8 +570,7 @@ static void at_send_dtmf(struct ofono_voicecall *vc, const char *dtmf,
 		return;
 
 error:
-	if (cbd)
-		g_free(cbd);
+	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
 }
@@ -842,6 +844,7 @@ static int at_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 
 	vd = g_new0(struct voicecall_data, 1);
 	vd->chat = g_at_chat_clone(chat);
+	vd->vendor = vendor;
 
 	ofono_voicecall_set_data(vc, vd);
 
@@ -875,7 +878,7 @@ static struct ofono_voicecall_driver driver = {
 	.remove			= at_voicecall_remove,
 	.dial			= at_dial,
 	.answer			= at_answer,
-	.hangup_active		= at_hangup,
+	.hangup_all		= at_hangup,
 	.hold_all_active	= at_hold_all_active,
 	.release_all_held	= at_release_all_held,
 	.set_udub		= at_set_udub,

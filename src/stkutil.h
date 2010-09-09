@@ -237,6 +237,7 @@ enum stk_result_type {
 	STK_RESULT_TYPE_GO_BACK =			0x11,
 	STK_RESULT_TYPE_NO_RESPONSE =			0x12,
 	STK_RESULT_TYPE_HELP_REQUESTED =		0x13,
+	STK_RESULT_TYPE_USSD_OR_SS_USER_TERMINATION =	0x14,
 
 	/* 0x20 to 0x2F are used to indicate that SIM should retry */
 	STK_RESULT_TYPE_TERMINAL_BUSY =			0x20,
@@ -254,6 +255,7 @@ enum stk_result_type {
 	STK_RESULT_TYPE_DATA_NOT_UNDERSTOOD =		0x32,
 	STK_RESULT_TYPE_COMMAND_ID_UNKNOWN =		0x33,
 	STK_RESULT_TYPE_MINIMUM_NOT_MET =		0x36,
+	STK_RESULT_TYPE_USSD_RETURN_ERROR =		0x37,
 	STK_RESULT_TYPE_CALL_CONTROL_PERMANENT =	0x39,
 	STK_RESULT_TYPE_BIP_ERROR =			0x3A,
 	STK_RESULT_TYPE_ACCESS_TECHNOLOGY_ERROR =	0x3B,
@@ -553,8 +555,8 @@ enum stk_rejection_cause_code {
 };
 
 enum stk_me_status {
-	STK_ME_STATUS_IDLE = 		0x00,
-	STK_ME_STATUS_NOT_IDLE = 	0x01
+	STK_ME_STATUS_IDLE =		0x00,
+	STK_ME_STATUS_NOT_IDLE =	0x01
 };
 
 enum stk_img_scheme {
@@ -852,7 +854,7 @@ struct stk_card_reader_id {
 struct stk_other_address {
 	union {
 		/* Network Byte Order */
-		uint32_t ipv4;
+		guint32 ipv4;
 		unsigned char ipv6[16];
 	} addr;
 	enum stk_address_type type;
@@ -1374,6 +1376,12 @@ struct stk_answer_text {
 	 */
 };
 
+struct stk_ussd_text {
+	const unsigned char *text;
+	int dcs;
+	int len;
+};
+
 struct stk_response_get_inkey {
 	struct stk_answer_text text;
 	struct stk_duration duration;
@@ -1445,6 +1453,10 @@ struct stk_response_run_at_command {
 	const char *at_response;
 };
 
+struct stk_response_send_ussd {
+	struct stk_ussd_text text;
+};
+
 struct stk_response {
 	unsigned char number;
 	unsigned char type;
@@ -1474,6 +1486,7 @@ struct stk_response {
 		struct stk_response_generic send_dtmf;
 		struct stk_response_generic language_notification;
 		struct stk_response_generic launch_browser;
+		struct stk_response_send_ussd send_ussd;
 	};
 
 	void (*destructor)(struct stk_response *response);

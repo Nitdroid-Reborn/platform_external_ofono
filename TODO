@@ -78,6 +78,7 @@ SMS
 
   Priority: High
   Complexity: C1
+  Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
 
 - Better unique ID for incoming / outgoing messages.  Currently oFono uses
   a simple incremental counter stored in the settings store (NextMessageId).
@@ -101,7 +102,7 @@ SMS
 
   Priority: Medium
   Complexity: C4
-  Owner: Pasi Miettinen <pasi.miettinen@ixonos.com>
+  Owner: Petteri Tikander <petteri.tikander@ixonos.com>
 
 
 SIM / SIM File system
@@ -140,6 +141,23 @@ SIM / SIM File system
   PUKs.  Need to enable this as a property in oFono.
 
   Priority: Low
+  Complexity: C2
+
+- Add support for SIM 'ready' notifications from the driver to the core.  Most
+  modem manufacturers initialize the SIM (e.g. cache SIM file system, STK
+  initialization, etc) internally before allowing the telephony stack to
+  access these portions.  When the PIN is locked, this can lead to oFono being
+  too fast for the modem and asking it for things before the firmware is ready.
+
+  The proposal is to introduce a new sim function:
+    void ofono_sim_ready_notify(struct ofono_sim *sim);
+
+  When oFono determines the SIM PIN is READY, it checks whether
+  ofono_sim_ready_notify has been called.  If it hasn't, then it stalls the
+  initialization procedure (and calling post_sim) until
+  ofono_sim_ready_notify is called.
+
+  Priority: High
   Complexity: C2
 
 
@@ -232,6 +250,9 @@ Location Services
 - Neighbor Cell Info.  Add dedicated atom, D-Bus API and atom driver(s) for
   Neighbor Cell information.
 
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
+
   Complexity: C4
   Priority: Medium
 
@@ -245,6 +266,9 @@ Supplementary Services
   Complexity: C8
 
 - Call Completion to Busy Subscriber (CCBS) support
+
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
 
   Priority: Low
   Complexity: C8
@@ -292,6 +316,7 @@ Voicecall
   DialString call property. Add dialstring accessor method to C API.
 
   Priority: Medium
+  Complexity: C4
 
 - Provide feedback of sent DTMF tones. Emit SendingTones signal if modem can
   provide approximate starting and stopping times for DTMF tones. Signal
@@ -486,8 +511,30 @@ Sim Toolkit
   Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
 
 
-Miscellaneous
-=============
+Emergency Calls
+===============
+
+- Modem Emergency mode.  Support network registration and online/offline
+  mode during the emergency calls and related network activity (e.g.,
+  network-initiated location request via supplementary service channel).
+
+  Proposed solution is to introduce a new Emergency boolean property to the
+  Modem D-Bus interface and new functions to modem interface:
+
+  - ofono_modem_emergency_mode_inc()
+  - ofono_modem_emergency_mode_dec()
+  - ofono_modem_emergency_mode_get()
+  - ofono_modem_add_emergency_mode_watch()
+  - ofono_modem_remove_emergency_mode_watch()
+
+  When emergency mode is requested, modem is set to online (if needed) and
+  the watchers are notified. There can be multiple parties requesting
+  emergency mode.  When all of them have completed the emergency-related
+  operation and called ofono_modem_emergency_mode_dec(), modem is set to
+  offline (if needed) and the watchers are again notified.
+
+  Priority: High
+  Complexity: C2
 
 - Country / Operator specific emergency numbers.  Figure out how to support
   countries / operators with specific mandated emergency numbers which are
@@ -496,8 +543,25 @@ Miscellaneous
   assumed to be managed by the modem.  If no such functionality is available,
   then the 3GPP mandated behavior is used.
 
-  Complexity: C2
   Priority: High
+  Complexity: C2
+
+- Network updating the emergency number list. Support the list of emergency
+  numbers dynamically updated by the network.
+
+  Priority: High
+  Complexity: C2
+
+- Extend the voicecall interface with a property indicating whether this call
+  is an emergency call (essentially the CLI matches one of the numbers on the
+  emergency calling codes list.)
+
+  Priority: High
+  Complexity: C1
+
+
+Miscellaneous
+=============
 
 - Bluetooth SAP Client support.  The Telit UC864-G devices support Bluetooth
   SAP client mode.  This requires the use of a modem side-channel to read the
@@ -509,6 +573,9 @@ Miscellaneous
 
 - Frequency Band Selection.  Add frequency band selection capability to the
   RadioSettings atom.
+
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
 
   Complexity: C2
   Priority: Low
@@ -539,6 +606,8 @@ Miscellaneous
   application can lift the lock.  Alternatively, if the calling application
   exits prematurely the lock is lifted as well.
 
+  The proposed property name is "Lockdown" as part of the Modem interface.
+
   Priority: Medium
   Complexity: C2
 
@@ -551,12 +620,8 @@ Miscellaneous
   If the modem does not support such a feature the property should never be
   exposed to the user.
 
-  Priority: High
-  Complexity: C1
-
-- Extend the voicecall interface with a property indicating whether this call
-  is an emergency call (essentially the CLI matches one of the numbers on the
-  emergency calling codes list.)
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
 
   Priority: High
   Complexity: C1
@@ -565,5 +630,19 @@ Miscellaneous
   the user to enable or disable the TTY support on the modem.  Support for
   automatic detection of TTY (signaled by the driver) is also desired.
 
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
+
   Priority: High
   Complexity: C1
+
+
+- Add support for GPS power control atom.  Many modem manufacturers provide
+  a GPS unit with their modem hardware.  This unit can be turned on or off
+  and frequently takes over one of the tty ports that the modem provides.
+
+  This feature is not discussed in 27.007, thus manufacturer specific commands
+  are required.
+
+  Priority: Low
+  Complexity: C4

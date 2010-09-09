@@ -31,6 +31,7 @@ LOCAL_CFLAGS+=-DOFONO_PLUGIN_BUILTIN -DHAVE_CONFIG_H
 LOCAL_SRC_FILES:= \
 	gdbus/mainloop.c \
 	gdbus/object.c \
+	gdbus/polkit.c \
 	gdbus/watch.c \
 	gisi/netlink.c \
 	gisi/socket.c \
@@ -87,6 +88,7 @@ LOCAL_SRC_FILES:= \
 	src/ssn.c \
 	src/call-barring.c \
 	src/sim.c \
+	src/simfs.c \
 	src/simutil.c \
 	src/nettime.c \
 	src/phonebook.c \

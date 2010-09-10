@@ -30,7 +30,6 @@ void __ofono_exit();
 int __ofono_manager_init();
 void __ofono_manager_cleanup();
 
-const char **__ofono_modem_get_list();
 void __ofono_modem_shutdown();
 
 #include <ofono/log.h>
@@ -90,9 +89,14 @@ void __ofono_plugin_cleanup(void);
 
 #include <ofono/modem.h>
 
+typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem, void *data);
+void __ofono_modem_foreach(ofono_modem_foreach_func cb, void *userdata);
+
 unsigned int __ofono_modem_callid_next(struct ofono_modem *modem);
 void __ofono_modem_callid_hold(struct ofono_modem *modem, int id);
 void __ofono_modem_callid_release(struct ofono_modem *modem, int id);
+void __ofono_modem_append_properties(struct ofono_modem *modem,
+						DBusMessageIter *dict);
 
 struct ofono_atom;
 

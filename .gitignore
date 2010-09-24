@@ -23,7 +23,6 @@ stamp-h1
 autom4te.cache
 
 include/ofono
-include/version.h
 src/builtin.h
 src/ofonod
 src/ofono.exp

@@ -63,7 +63,7 @@
 #define PACKAGE_TARNAME "ofono"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "0.15"
+#define PACKAGE_VERSION "0.28"
 
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1

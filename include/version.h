@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define OFONO_VERSION	"0.28"
+#define OFONO_VERSION	"0.31"
 
 #ifdef __cplusplus
 }

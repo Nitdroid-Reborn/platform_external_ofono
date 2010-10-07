@@ -63,9 +63,9 @@ LOCAL_SRC_FILES:= \
 	drivers/isimodem/call-barring.c \
 	drivers/isimodem/call-meter.c \
 	plugins/modemconf.c \
-	plugins/n900modem.c \
-	plugins/n900gpio.c \
-	plugins/n900gpio.h \
+	plugins/n900.c \
+	plugins/nokia-gpio.c \
+	plugins/nokia-gpio.h \
 	src/main.c \
 	src/audio-settings.c \
 	src/common.c \

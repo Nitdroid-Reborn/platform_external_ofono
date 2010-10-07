@@ -22,13 +22,17 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include <config.h>
+#include <ofono/config.h>
 #endif
 
 #include <glib.h>
 #include <dbus/dbus.h>
 
-#ifdef NEED_DBUS_WATCH_GET_UNIX_FD
+#ifndef NEED_DBUS_WATCH_GET_UNIX_FD
+#error add symlink 'ofono -> .' in external/ofono/include directory
+#endif
+
+#if (NEED_DBUS_WATCH_GET_UNIX_FD > 0)
 #define dbus_watch_get_unix_fd dbus_watch_get_fd
 #endif
 

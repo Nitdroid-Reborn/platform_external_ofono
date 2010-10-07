@@ -57,13 +57,13 @@
 #define PACKAGE_NAME "ofono"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "ofono 0.15"
+#define PACKAGE_STRING "ofono 0.28"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "ofono"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "0.15"
+#define PACKAGE_VERSION "0.28"
 
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
@@ -74,7 +74,7 @@
 #define PLUGINDIR "/system/lib/"
 
 /* Version number of package */
-#define VERSION "0.15"
+#define VERSION "0.28"
 
 /* Decide if we're going to support IPv6 */
 /* IPv6 can be forced off with "make COPTS=-DNO_IPV6" */

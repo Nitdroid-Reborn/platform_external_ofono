@@ -34,6 +34,7 @@
 
 const char *ss_message_id_name(enum ss_message_id value);
 const char *ss_subblock_name(enum ss_subblock value);
+const char *ss_ussd_type_name(enum ss_ussd_type value);
 
 const char *mtc_isi_cause_name(enum mtc_isi_cause value);
 const char *mtc_message_id_name(enum mtc_message_id value);
@@ -70,6 +71,8 @@ const char *gpds_message_id_name(enum gpds_message_id value);
 const char *gpds_subblock_name(enum gpds_subblock value);
 const char *gpds_status_name(enum gpds_status value);
 const char *gpds_isi_cause_name(enum gpds_isi_cause value);
+const char *gpds_transfer_status_name(enum gpds_transfer_status value);
+const char *gpds_transfer_cause_name(enum gpds_transfer_cause value);
 
 void ss_debug(const void *restrict buf, size_t len, void *data);
 void mtc_debug(const void *restrict buf, size_t len, void *data);

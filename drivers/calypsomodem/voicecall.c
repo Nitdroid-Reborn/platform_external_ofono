@@ -27,6 +27,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 #include <glib.h>
 
@@ -119,10 +120,16 @@ static void calypso_answer(struct ofono_voicecall *vc,
 	calypso_template(vc, "ATA", cb, data);
 }
 
-static void calypso_hangup(struct ofono_voicecall *vc,
+static void calypso_ath(struct ofono_voicecall *vc,
 				ofono_voicecall_cb_t cb, void *data)
 {
 	calypso_template(vc, "ATH", cb, data);
+}
+
+static void calypso_chup(struct ofono_voicecall *vc,
+				ofono_voicecall_cb_t cb, void *data)
+{
+	calypso_template(vc, "AT+CHUP", cb, data);
 }
 
 static void calypso_hold_all_active(struct ofono_voicecall *vc,
@@ -376,13 +383,16 @@ static void calypso_voicecall_initialized(gboolean ok, GAtResult *result,
 	ofono_voicecall_register(vc);
 }
 
-static int calypso_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
-					void *data)
+static int calypso_voicecall_probe(struct ofono_voicecall *vc,
+					unsigned int vendor, void *data)
 {
 	GAtChat *chat = data;
 	struct voicecall_data *vd;
 
-	vd = g_new0(struct voicecall_data, 1);
+	vd = g_try_new0(struct voicecall_data, 1);
+	if (!vd)
+		return -ENOMEM;
+
 	vd->chat = g_at_chat_clone(chat);
 
 	ofono_voicecall_set_data(vc, vd);
@@ -409,7 +419,8 @@ static struct ofono_voicecall_driver driver = {
 	.remove			= calypso_voicecall_remove,
 	.dial			= calypso_dial,
 	.answer			= calypso_answer,
-	.hangup_active		= calypso_hangup,
+	.hangup_all		= calypso_ath,
+	.hangup_active		= calypso_chup,
 	.hold_all_active	= calypso_hold_all_active,
 	.release_all_held	= calypso_release_all_held,
 	.set_udub		= calypso_set_udub,

@@ -25,6 +25,7 @@
 
 #include <errno.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #include <libudev.h>
 
@@ -210,6 +211,35 @@ static void add_hso(struct ofono_modem *modem,
 	}
 }
 
+static void add_ifx(struct ofono_modem *modem,
+					struct udev_device *udev_device)
+{
+	struct udev_list_entry *entry;
+	const char *devnode;
+
+	DBG("modem %p", modem);
+
+	devnode = udev_device_get_devnode(udev_device);
+	ofono_modem_set_string(modem, "Device", devnode);
+
+	entry = udev_device_get_properties_list_entry(udev_device);
+	while (entry) {
+		const char *name = udev_list_entry_get_name(entry);
+		const char *value = udev_list_entry_get_value(entry);
+
+		if (g_str_equal(name, "OFONO_IFX_LDISC") == TRUE)
+			ofono_modem_set_string(modem, "LineDiscipline", value);
+		else if (g_str_equal(name, "OFONO_IFX_AUDIO") == TRUE)
+			ofono_modem_set_string(modem, "AudioSetting", value);
+		else if (g_str_equal(name, "OFONO_IFX_LOOPBACK") == TRUE)
+			ofono_modem_set_string(modem, "AudioLoopback", value);
+
+		entry = udev_list_entry_get_next(entry);
+	}
+
+	ofono_modem_register(modem);
+}
+
 static void add_zte(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
@@ -393,11 +423,47 @@ static void add_nokia(struct ofono_modem *modem,
 	}
 }
 
+static void add_isi(struct ofono_modem *modem,
+					struct udev_device *udev_device)
+{
+	const char *ifname, *addr;
+
+	DBG("modem %p", modem);
+
+	ifname = udev_device_get_sysname(udev_device);
+	ofono_modem_set_string(modem, "Interface", ifname);
+
+	DBG("interface %s", ifname);
+
+	addr = udev_device_get_property_value(udev_device, "OFONO_ISI_ADDRESS");
+	if (addr != NULL)
+		ofono_modem_set_integer(modem, "Address", atoi(addr));
+
+	ofono_modem_register(modem);
+}
+
 static void add_modem(struct udev_device *udev_device)
 {
 	struct ofono_modem *modem;
 	struct udev_device *parent;
 	const char *devpath, *curpath, *driver;
+
+	driver = get_driver(udev_device);
+	if (driver != NULL) {
+		devpath = udev_device_get_devpath(udev_device);
+		if (devpath == NULL)
+			return;
+
+		modem = ofono_modem_create(NULL, driver);
+		if (modem == NULL)
+			return;
+
+		ofono_modem_set_string(modem, "Path", devpath);
+
+		modem_list = g_slist_prepend(modem_list, modem);
+
+		goto done;
+	}
 
 	parent = udev_device_get_parent(udev_device);
 	if (parent == NULL)
@@ -433,6 +499,7 @@ static void add_modem(struct udev_device *udev_device)
 		modem_list = g_slist_prepend(modem_list, modem);
 	}
 
+done:
 	curpath = udev_device_get_devpath(udev_device);
 	if (curpath == NULL)
 		return;
@@ -445,6 +512,8 @@ static void add_modem(struct udev_device *udev_device)
 		add_mbm(modem, udev_device);
 	else if (g_strcmp0(driver, "hso") == 0)
 		add_hso(modem, udev_device);
+	else if (g_strcmp0(driver, "ifx") == 0)
+		add_ifx(modem, udev_device);
 	else if (g_strcmp0(driver, "zte") == 0)
 		add_zte(modem, udev_device);
 	else if (g_strcmp0(driver, "huawei") == 0)
@@ -453,6 +522,10 @@ static void add_modem(struct udev_device *udev_device)
 		add_novatel(modem, udev_device);
 	else if (g_strcmp0(driver, "nokia") == 0)
 		add_nokia(modem, udev_device);
+	else if (g_strcmp0(driver, "isigen") == 0)
+		add_isi(modem, udev_device);
+	else if (g_strcmp0(driver, "n900") == 0)
+		add_isi(modem, udev_device);
 }
 
 static gboolean devpath_remove(gpointer key, gpointer value, gpointer user_data)
@@ -504,6 +577,7 @@ static void enumerate_devices(struct udev *context)
 
 	udev_enumerate_add_match_subsystem(enumerate, "tty");
 	udev_enumerate_add_match_subsystem(enumerate, "net");
+	udev_enumerate_add_match_subsystem(enumerate, "hsi");
 
 	udev_enumerate_scan_devices(enumerate);
 
@@ -519,7 +593,8 @@ static void enumerate_devices(struct udev *context)
 			subsystem = udev_device_get_subsystem(device);
 
 			if (g_strcmp0(subsystem, "tty") == 0 ||
-					g_strcmp0(subsystem, "net") == 0)
+					g_strcmp0(subsystem, "net") == 0 ||
+					g_strcmp0(subsystem, "hsi") == 0)
 				add_modem(device);
 
 			udev_device_unref(device);
@@ -552,11 +627,13 @@ static gboolean udev_event(GIOChannel *channel,
 
 	if (g_str_equal(action, "add") == TRUE) {
 		if (g_strcmp0(subsystem, "tty") == 0 ||
-					g_strcmp0(subsystem, "net") == 0)
+				g_strcmp0(subsystem, "net") == 0 ||
+					g_strcmp0(subsystem, "hsi") == 0)
 			add_modem(device);
 	} else if (g_str_equal(action, "remove") == TRUE) {
 		if (g_strcmp0(subsystem, "tty") == 0 ||
-					g_strcmp0(subsystem, "net") == 0)
+				g_strcmp0(subsystem, "net") == 0 ||
+					g_strcmp0(subsystem, "hsi") == 0)
 			remove_modem(device);
 	}
 
@@ -620,6 +697,7 @@ static int udev_init(void)
 
 	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "tty", NULL);
 	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "net", NULL);
+	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "hsi", NULL);
 
 	udev_monitor_filter_update(udev_mon);
 

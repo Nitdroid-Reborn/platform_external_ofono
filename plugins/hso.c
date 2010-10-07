@@ -36,6 +36,7 @@
 #include <ofono/modem.h>
 #include <ofono/devinfo.h>
 #include <ofono/netreg.h>
+#include <ofono/phonebook.h>
 #include <ofono/sim.h>
 #include <ofono/cbs.h>
 #include <ofono/sms.h>
@@ -85,6 +86,7 @@ static void hso_remove(struct ofono_modem *modem)
 static void hso_debug(const char *str, void *user_data)
 {
 	const char *prefix = user_data;
+
 	ofono_info("%s%s", prefix, str);
 }
 
@@ -156,7 +158,7 @@ static int hso_enable(struct ofono_modem *modem)
 		return -EIO;
 
 	if (getenv("OFONO_AT_DEBUG"))
-		g_at_chat_set_debug(data->control, hso_debug, "Control:");
+		g_at_chat_set_debug(data->control, hso_debug, "Control: ");
 
 	data->app = create_port(app);
 
@@ -168,7 +170,7 @@ static int hso_enable(struct ofono_modem *modem)
 	}
 
 	if (getenv("OFONO_AT_DEBUG"))
-		g_at_chat_set_debug(data->app, hso_debug, "App:");
+		g_at_chat_set_debug(data->app, hso_debug, "App: ");
 
 	g_at_chat_send(data->control, "ATE0", none_prefix, NULL, NULL, NULL);
 	g_at_chat_send(data->app, "ATE0", none_prefix, NULL, NULL, NULL);
@@ -262,6 +264,15 @@ static void hso_pre_sim(struct ofono_modem *modem)
 		ofono_sim_inserted_notify(sim, TRUE);
 }
 
+static void hso_post_sim(struct ofono_modem *modem)
+{
+	struct hso_data *data = ofono_modem_get_data(modem);
+
+	DBG("%p", modem);
+
+	ofono_phonebook_create(modem, 0, "atmodem", data->app);
+}
+
 static void hso_post_online(struct ofono_modem *modem)
 {
 	struct hso_data *data = ofono_modem_get_data(modem);
@@ -296,6 +307,7 @@ static struct ofono_modem_driver hso_driver = {
 	.disable	= hso_disable,
 	.set_online     = hso_set_online,
 	.pre_sim	= hso_pre_sim,
+	.post_sim	= hso_post_sim,
 	.post_online	= hso_post_online,
 };
 

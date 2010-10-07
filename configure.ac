@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(ofono, 0.28)
+AC_INIT(ofono, 0.31)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AM_CONFIG_HEADER(config.h)
@@ -22,8 +22,6 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_CC_PIE
 AC_PROG_INSTALL
-AC_PROG_SED
-AC_PROG_AWK
 AM_PROG_MKDIR_P
 
 m4_define([_LT_AC_TAGCONFIG], [])
@@ -31,7 +29,6 @@ m4_ifdef([AC_LIBTOOL_TAGS], [AC_LIBTOOL_TAGS([])])
 
 AC_DISABLE_STATIC
 AC_PROG_LIBTOOL
-AC_PROG_NM
 
 AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization],
 			[disable code optimization through compiler]), [
@@ -95,24 +92,32 @@ AC_CHECK_LIB(dbus-1, dbus_connection_can_send_type, dummy=yes,
 AC_SUBST(DBUS_CFLAGS)
 AC_SUBST(DBUS_LIBS)
 
-AC_ARG_WITH(dbusconf, AC_HELP_STRING([--with-dbusconf=PATH],
+AC_ARG_WITH(dbusconfdir, AC_HELP_STRING([--with-dbusconfdir=PATH],
 	[path to D-Bus config directory]), [path_dbusconf=${withval}],
 		[path_dbusconf="`$PKG_CONFIG --variable=sysconfdir dbus-1`"])
 if (test -z "${path_dbusconf}"); then
-	DBUS_DATADIR="${sysconfdir}/dbus-1/system.d"
+	DBUS_CONFDIR="${sysconfdir}/dbus-1/system.d"
 else
-	DBUS_DATADIR="${path_dbusconf}/dbus-1/system.d"
+	DBUS_CONFDIR="${path_dbusconf}/dbus-1/system.d"
 fi
-AC_SUBST(DBUS_DATADIR)
+AC_SUBST(DBUS_CONFDIR)
+
+AC_ARG_ENABLE(capng, AC_HELP_STRING([--enable-capng],
+		[enable capabilities support]), [enable_capng=${enableval}])
+if (test "${enable_capng}" = "yes"); then
+	PKG_CHECK_MODULES(CAPNG, libcap-ng, dummy=yes,
+				AC_MSG_ERROR(Capabilities library is required))
+	AC_SUBST(CAPNG_CFLAGS)
+	AC_SUBST(CAPNG_LIBS)
+	AC_DEFINE(HAVE_CAPNG, 1, [Define to 1 if you have capabilities library.])
+fi
 
 AC_ARG_ENABLE(udev, AC_HELP_STRING([--disable-udev],
 			[don't use udev support even if available]),
 						[enable_udev=${enableval}])
 if (test "${enable_udev}" != "no"); then
-	PKG_CHECK_MODULES(UDEV, libudev >= 143,
-				[enable_udev="yes"], [enable_udev="no"])
-fi
-if (test "${enable_udev}" = "yes"); then
+	PKG_CHECK_MODULES(UDEV, libudev >= 143, [enable_udev="yes"],
+				AC_MSG_ERROR(libudev >= 143 is required))
 	UDEV_DATADIR="`$PKG_CONFIG --variable=udevdir udev`"
 	if (test -z "${UDEV_DATADIR}"); then
 		UDEV_DATADIR="${sysconfdir}/udev/rules.d"
@@ -124,16 +129,6 @@ fi
 AC_SUBST(UDEV_CFLAGS)
 AC_SUBST(UDEV_LIBS)
 AM_CONDITIONAL(UDEV, test "${enable_udev}" = "yes")
-
-AC_ARG_ENABLE(capng, AC_HELP_STRING([--enable-capng],
-		[enable capabilities support]), [enable_capng=${enableval}])
-if (test "${enable_capng}" = "yes"); then
-	PKG_CHECK_MODULES(CAPNG, libcap-ng, dummy=yes,
-				AC_MSG_ERROR(Capabilities library is required))
-	AC_SUBST(CAPNG_CFLAGS)
-	AC_SUBST(CAPNG_LIBS)
-	AC_DEFINE(HAVE_CAPNG, 1, [Define to 1 if you have capabilities library.])
-fi
 
 AC_ARG_ENABLE(isimodem, AC_HELP_STRING([--disable-isimodem],
 				[disable PhoNet/ISI modem support]),

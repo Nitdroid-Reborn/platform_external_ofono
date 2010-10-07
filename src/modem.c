@@ -42,6 +42,8 @@ static int next_modem_id = 0;
 static gboolean powering_down = FALSE;
 static int modems_remaining = 0;
 
+static struct ofono_watchlist *g_modemwatches = NULL;
+
 enum property_type {
 	PROPERTY_TYPE_INVALID = 0,
 	PROPERTY_TYPE_STRING,
@@ -1022,7 +1024,8 @@ static void query_manufacturer_cb(const struct ofono_error *error,
 
 	ofono_dbus_signal_property_changed(conn, path,
 						OFONO_MODEM_INTERFACE,
-						"Manufacturer", DBUS_TYPE_STRING,
+						"Manufacturer",
+						DBUS_TYPE_STRING,
 						&info->manufacturer);
 
 out:
@@ -1329,8 +1332,54 @@ static void sim_watch(struct ofono_atom *atom,
 
 	modem->sim = __ofono_atom_get_data(atom);
 	modem->sim_ready_watch = ofono_sim_add_state_watch(modem->sim,
-								sim_state_watch,
-								modem, NULL);
+							sim_state_watch,
+							modem, NULL);
+}
+
+void __ofono_modemwatch_init()
+{
+	g_modemwatches = __ofono_watchlist_new(g_free);
+}
+
+void __ofono_modemwatch_cleanup()
+{
+	__ofono_watchlist_free(g_modemwatches);
+}
+
+unsigned int __ofono_modemwatch_add(ofono_modemwatch_cb_t cb, void *user,
+					ofono_destroy_func destroy)
+{
+	struct ofono_watchlist_item *watch;
+
+	if (cb == NULL)
+		return 0;
+
+	watch = g_new0(struct ofono_watchlist_item, 1);
+
+	watch->notify = cb;
+	watch->destroy = destroy;
+	watch->notify_data = user;
+
+	return __ofono_watchlist_add_item(g_modemwatches, watch);
+}
+
+gboolean __ofono_modemwatch_remove(unsigned int id)
+{
+	return __ofono_watchlist_remove_item(g_modemwatches, id);
+}
+
+static void call_modemwatches(struct ofono_modem *modem, gboolean added)
+{
+	GSList *l;
+	struct ofono_watchlist_item *watch;
+	ofono_modemwatch_cb_t notify;
+
+	for (l = g_modemwatches->items; l; l = l->next) {
+		watch = l->data;
+
+		notify = watch->notify;
+		notify(modem, added, watch->notify_data);
+	}
 }
 
 static void emit_modem_added(struct ofono_modem *modem)
@@ -1390,9 +1439,10 @@ int ofono_modem_register(struct ofono_modem *modem)
 	if (modem->driver == NULL)
 		return -ENODEV;
 
-	if (!g_dbus_register_interface(conn, modem->path, OFONO_MODEM_INTERFACE,
-				modem_methods, modem_signals, NULL,
-				modem, NULL)) {
+	if (!g_dbus_register_interface(conn, modem->path,
+					OFONO_MODEM_INTERFACE,
+					modem_methods, modem_signals, NULL,
+					modem, NULL)) {
 		ofono_error("Modem register failed on path %s", modem->path);
 
 		if (modem->driver->remove)
@@ -1409,6 +1459,7 @@ int ofono_modem_register(struct ofono_modem *modem)
 	modem->atom_watches = __ofono_watchlist_new(g_free);
 
 	emit_modem_added(modem);
+	call_modemwatches(modem, TRUE);
 
 	modem->sim_watch = __ofono_modem_add_atom_watch(modem,
 					OFONO_ATOM_TYPE_SIM,
@@ -1474,6 +1525,7 @@ static void modem_unregister(struct ofono_modem *modem)
 	modem->driver = NULL;
 
 	emit_modem_removed(modem);
+	call_modemwatches(modem, FALSE);
 }
 
 void ofono_modem_remove(struct ofono_modem *modem)

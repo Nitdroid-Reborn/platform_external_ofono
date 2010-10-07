@@ -27,6 +27,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 #include <glib.h>
 
@@ -99,7 +100,6 @@ static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
 
 	/* Generate a call structure for the waiting call */
 	call = g_try_new0(struct ofono_call, 1);
-
 	if (!call)
 		return NULL;
 
@@ -117,10 +117,6 @@ static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
 	call->clip_validity = clip;
 
 	d->calls = g_slist_insert_sorted(d->calls, call, at_util_call_compare);
-
-	if (d->vendor == OFONO_VENDOR_HUAWEI)
-		g_at_chat_send(d->chat, "AT^DDSETEX=2", none_prefix,
-							NULL, NULL, NULL);
 
 	return call;
 }
@@ -307,13 +303,12 @@ static void atd_cb(gboolean ok, GAtResult *result, gpointer user_data)
 
 	/* Generate a voice call that was just dialed, we guess the ID */
 	call = create_call(vc, 0, 0, 2, num, type, validity);
-
 	if (!call) {
 		ofono_error("Unable to malloc, call tracking will fail!");
 		return;
 	}
 
-	/* Telephonyd will generate a call with the dialed number
+	/* oFono core will generate a call with the dialed number
 	 * inside its dial callback.  Unless we got COLP information
 	 * we do not need to communicate that a call is being
 	 * dialed
@@ -508,7 +503,7 @@ static void at_transfer(struct ofono_voicecall *vc,
 	unsigned int transfer = 0x1 | 0x2;
 
 	/* Transfer can puts held & active calls together and disconnects
-	 * from both.  However, some networks support transfering of
+	 * from both.  However, some networks support transferring of
 	 * dialing/ringing calls as well.
 	 */
 	transfer |= 0x4 | 0x8;
@@ -633,7 +628,6 @@ static void cring_notify(GAtResult *result, gpointer user_data)
 		return;
 
 	line = g_at_result_iter_raw_line(&iter);
-
 	if (line == NULL)
 		return;
 
@@ -668,7 +662,6 @@ static void clip_notify(GAtResult *result, gpointer user_data)
 
 	l = g_slist_find_custom(vd->calls, GINT_TO_POINTER(4),
 				at_util_call_compare_by_status);
-
 	if (l == NULL) {
 		ofono_error("CLIP for unknown call");
 		return;
@@ -763,7 +756,6 @@ static void ccwa_notify(GAtResult *result, gpointer user_data)
 
 	call = create_call(vc, class_to_call_type(cls), 1, 5,
 				num, num_type, validity);
-
 	if (!call) {
 		ofono_error("Unable to malloc. Call management is fubar");
 		return;
@@ -842,7 +834,10 @@ static int at_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 	GAtChat *chat = data;
 	struct voicecall_data *vd;
 
-	vd = g_new0(struct voicecall_data, 1);
+	vd = g_try_new0(struct voicecall_data, 1);
+	if (!vd)
+		return -ENOMEM;
+
 	vd->chat = g_at_chat_clone(chat);
 	vd->vendor = vendor;
 
@@ -853,6 +848,7 @@ static int at_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 	g_at_chat_send(vd->chat, "AT+COLP=1", NULL, NULL, NULL, NULL);
 	g_at_chat_send(vd->chat, "AT+CCWA=1", NULL,
 				at_voicecall_initialized, vc, NULL);
+
 	return 0;
 }
 

@@ -89,7 +89,8 @@ void __ofono_plugin_cleanup(void);
 
 #include <ofono/modem.h>
 
-typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem, void *data);
+typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem,
+						void *data);
 void __ofono_modem_foreach(ofono_modem_foreach_func cb, void *userdata);
 
 unsigned int __ofono_modem_callid_next(struct ofono_modem *modem);
@@ -120,8 +121,9 @@ enum ofono_atom_type {
 	OFONO_ATOM_TYPE_GPRS = 16,
 	OFONO_ATOM_TYPE_GPRS_CONTEXT = 17,
 	OFONO_ATOM_TYPE_RADIO_SETTINGS = 18,
-	OFONO_ATOM_TYPE_STK = 19,
-	OFONO_ATOM_TYPE_NETTIME = 20,
+	OFONO_ATOM_TYPE_AUDIO_SETTINGS = 19,
+	OFONO_ATOM_TYPE_STK = 20,
+	OFONO_ATOM_TYPE_NETTIME = 21,
 };
 
 enum ofono_atom_watch_condition {
@@ -160,11 +162,20 @@ gboolean __ofono_atom_get_registered(struct ofono_atom *atom);
 unsigned int __ofono_modem_add_atom_watch(struct ofono_modem *modem,
 					enum ofono_atom_type type,
 					ofono_atom_watch_func notify,
-					void *data, ofono_destroy_func destroy);
+					void *data,
+					ofono_destroy_func destroy);
 gboolean __ofono_modem_remove_atom_watch(struct ofono_modem *modem,
 						unsigned int id);
 
 void __ofono_atom_free(struct ofono_atom *atom);
+
+typedef void (*ofono_modemwatch_cb_t)(struct ofono_modem *modem,
+					gboolean added, void *data);
+void __ofono_modemwatch_init();
+void __ofono_modemwatch_cleanup();
+unsigned int __ofono_modemwatch_add(ofono_modemwatch_cb_t cb, void *user,
+					ofono_destroy_func destroy);
+gboolean __ofono_modemwatch_remove(unsigned int id);
 
 #include <ofono/call-barring.h>
 
@@ -185,6 +196,7 @@ gboolean __ofono_call_settings_is_busy(struct ofono_call_settings *cs);
 #include <ofono/gprs.h>
 #include <ofono/gprs-context.h>
 #include <ofono/radio-settings.h>
+#include <ofono/audio-settings.h>
 
 #include <ofono/voicecall.h>
 
@@ -218,10 +230,10 @@ enum ofono_sms_submit_flag {
 
 typedef void (*ofono_sms_txq_submit_cb_t)(gboolean ok, void *data);
 
-unsigned int __ofono_sms_txq_submit(struct ofono_sms *sms, GSList *list,
-					unsigned int flags,
-					ofono_sms_txq_submit_cb_t cb,
-					void *data, ofono_destroy_func destroy);
+int __ofono_sms_txq_submit(struct ofono_sms *sms, GSList *list,
+				unsigned int flags, struct ofono_uuid *uuid,
+				ofono_sms_txq_submit_cb_t cb,
+				void *data, ofono_destroy_func destroy);
 
 #include <ofono/sim.h>
 #include <ofono/stk.h>
@@ -239,12 +251,12 @@ typedef void (*ofono_ssn_mt_notify_cb)(int index,
 unsigned int __ofono_ssn_mo_watch_add(struct ofono_ssn *ssn, int code1,
 					ofono_ssn_mo_notify_cb cb, void *user,
 					ofono_destroy_func destroy);
-gboolean __ofono_ssn_mo_watch_remove(struct ofono_ssn *ssn, int id);
+gboolean __ofono_ssn_mo_watch_remove(struct ofono_ssn *ssn, unsigned int id);
 
 unsigned int __ofono_ssn_mt_watch_add(struct ofono_ssn *ssn, int code2,
 					ofono_ssn_mt_notify_cb cb, void *user,
 					ofono_destroy_func destroy);
-gboolean __ofono_ssn_mt_watch_remove(struct ofono_ssn *ssn, int id);
+gboolean __ofono_ssn_mt_watch_remove(struct ofono_ssn *ssn, unsigned int id);
 
 #include <ofono/ussd.h>
 
@@ -258,6 +270,10 @@ typedef gboolean (*ofono_ussd_passwd_cb_t)(const char *sc,
 					const char *old, const char *new,
 					DBusMessage *msg, void *data);
 
+typedef void (*ofono_ussd_request_cb_t)(int error, int dcs,
+					const unsigned char *pdu, int len,
+					void *data);
+
 gboolean __ofono_ussd_ssc_register(struct ofono_ussd *ussd, const char *sc,
 					ofono_ussd_ssc_cb_t cb, void *data,
 					ofono_destroy_func destroy);
@@ -268,6 +284,11 @@ gboolean __ofono_ussd_passwd_register(struct ofono_ussd *ussd, const char *sc,
 					ofono_destroy_func destroy);
 void __ofono_ussd_passwd_unregister(struct ofono_ussd *ussd, const char *sc);
 gboolean __ofono_ussd_is_busy(struct ofono_ussd *ussd);
+
+int __ofono_ussd_initiate(struct ofono_ussd *ussd, int dcs,
+			const unsigned char *pdu, int len,
+			ofono_ussd_request_cb_t cb, void *user_data);
+void __ofono_ussd_initiate_cancel(struct ofono_ussd *ussd);
 
 #include <ofono/netreg.h>
 
@@ -297,17 +318,20 @@ void __ofono_history_call_missed(struct ofono_modem *modem,
 				const struct ofono_call *call, time_t when);
 
 void __ofono_history_sms_received(struct ofono_modem *modem,
-					unsigned int msg_id, const char *from,
+					const struct ofono_uuid *uuid,
+					const char *from,
 					const struct tm *remote,
 					const struct tm *local,
 					const char *text);
 
 void __ofono_history_sms_send_pending(struct ofono_modem *modem,
-					unsigned int msg_id, const char *to,
+					const struct ofono_uuid *uuid,
+					const char *to,
 					time_t when, const char *text);
 
 void __ofono_history_sms_send_status(struct ofono_modem *modem,
-					unsigned int msg_id, time_t when,
+					const struct ofono_uuid *uuid,
+					time_t when,
 					enum ofono_history_sms_status status);
 
 #include <ofono/message-waiting.h>

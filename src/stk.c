@@ -40,6 +40,7 @@
 #include "smsutil.h"
 #include "stkutil.h"
 #include "stkagent.h"
+#include "util.h"
 
 static GSList *g_drivers = NULL;
 
@@ -720,8 +721,12 @@ static gboolean handle_command_send_sms(const struct stk_command *cmd,
 	msg_list.data = (void *) &cmd->send_sms.gsm_sms;
 	msg_list.next = NULL;
 
-	__ofono_sms_txq_submit(sms, &msg_list, 0, send_sms_submit_cb,
-				stk->sms_submit_req, g_free);
+	if (__ofono_sms_txq_submit(sms, &msg_list, 0, NULL, send_sms_submit_cb,
+				stk->sms_submit_req, g_free) < 0) {
+		g_free(stk->sms_submit_req);
+		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+		return TRUE;
+	}
 
 	stk->cancel_cmd = send_sms_cancel;
 
@@ -1412,7 +1417,7 @@ static void call_setup_connected(struct ofono_call *call, void *data)
 	static struct ofono_error error = { .type = OFONO_ERROR_TYPE_FAILURE };
 	static unsigned char facility_rejected_result[] = { 0x9d };
 
-	if (!call) {
+	if (!call || call->status == CALL_STATUS_DISCONNECTED) {
 		memset(&rsp, 0, sizeof(rsp));
 
 		rsp.result.type = STK_RESULT_TYPE_NETWORK_UNAVAILABLE;
@@ -1590,6 +1595,228 @@ static gboolean handle_command_set_up_call(const struct stk_command *cmd,
 	return FALSE;
 }
 
+static void send_ussd_cancel(struct ofono_stk *stk)
+{
+	struct ofono_ussd *ussd;
+	struct ofono_atom *atom;
+
+	atom = __ofono_modem_find_atom(__ofono_atom_get_modem(stk->atom),
+						OFONO_ATOM_TYPE_USSD);
+	if (!atom)
+		return;
+
+	ussd = __ofono_atom_get_data(atom);
+	if (ussd)
+		__ofono_ussd_initiate_cancel(ussd);
+
+	if (stk->pending_cmd->send_ussd.alpha_id &&
+			stk->pending_cmd->send_ussd.alpha_id[0])
+		stk_alpha_id_unset(stk);
+}
+
+static void send_ussd_callback(int error, int dcs, const unsigned char *msg,
+				int msg_len, void *userdata)
+{
+	struct ofono_stk *stk = userdata;
+	struct ofono_error failure = { .type = OFONO_ERROR_TYPE_FAILURE };
+	struct stk_response rsp;
+	enum sms_charset charset;
+
+	if (stk->pending_cmd->send_ussd.alpha_id &&
+			stk->pending_cmd->send_ussd.alpha_id[0])
+		stk_alpha_id_unset(stk);
+
+	memset(&rsp, 0, sizeof(rsp));
+
+	switch (error) {
+	case 0:
+		if (cbs_dcs_decode(dcs, NULL, NULL, &charset,
+					NULL, NULL, NULL)) {
+			if (charset == SMS_CHARSET_7BIT)
+				rsp.send_ussd.text.dcs = 0x00;
+			else if (charset == SMS_CHARSET_8BIT)
+				rsp.send_ussd.text.dcs = 0x04;
+			else if (charset == SMS_CHARSET_UCS2)
+				rsp.send_ussd.text.dcs = 0x08;
+
+			rsp.result.type = STK_RESULT_TYPE_SUCCESS;
+			rsp.send_ussd.text.text = msg;
+			rsp.send_ussd.text.len = msg_len;
+			rsp.send_ussd.text.has_text = TRUE;
+		} else
+			rsp.result.type = STK_RESULT_TYPE_USSD_RETURN_ERROR;
+
+		if (stk_respond(stk, &rsp, stk_command_cb))
+			stk_command_cb(&failure, stk);
+
+		break;
+
+	case -ECANCELED:
+		send_simple_response(stk,
+				STK_RESULT_TYPE_USSD_OR_SS_USER_TERMINATION);
+		break;
+
+	case -ETIMEDOUT:
+		send_simple_response(stk, STK_RESULT_TYPE_NETWORK_UNAVAILABLE);
+		break;
+
+	default:
+		send_simple_response(stk, STK_RESULT_TYPE_USSD_RETURN_ERROR);
+		break;
+	}
+}
+
+static gboolean handle_command_send_ussd(const struct stk_command *cmd,
+					struct stk_response *rsp,
+					struct ofono_stk *stk)
+{
+	struct ofono_modem *modem = __ofono_atom_get_modem(stk->atom);
+	static unsigned char busy_on_ss_result[] = { 0x03 };
+	static unsigned char busy_on_ussd_result[] = { 0x08 };
+	struct ofono_atom *atom;
+	struct ofono_ussd *ussd;
+	int err;
+
+	atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_CALL_FORWARDING);
+	if (atom && __ofono_atom_get_registered(atom)) {
+		struct ofono_call_forwarding *cf = __ofono_atom_get_data(atom);
+
+		if (__ofono_call_forwarding_is_busy(cf)) {
+			rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+			rsp->result.additional_len = sizeof(busy_on_ss_result);
+			rsp->result.additional = busy_on_ss_result;
+			return TRUE;
+		}
+	}
+
+	atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_CALL_BARRING);
+	if (atom && __ofono_atom_get_registered(atom)) {
+		struct ofono_call_barring *cb = __ofono_atom_get_data(atom);
+
+		if (__ofono_call_barring_is_busy(cb)) {
+			rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+			rsp->result.additional_len = sizeof(busy_on_ss_result);
+			rsp->result.additional = busy_on_ss_result;
+			return TRUE;
+		}
+	}
+
+	atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_CALL_SETTINGS);
+	if (atom && __ofono_atom_get_registered(atom)) {
+		struct ofono_call_settings *cs = __ofono_atom_get_data(atom);
+
+		if (__ofono_call_settings_is_busy(cs)) {
+			rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+			rsp->result.additional_len = sizeof(busy_on_ss_result);
+			rsp->result.additional = busy_on_ss_result;
+			return TRUE;
+		}
+	}
+
+	atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_USSD);
+	if (!atom || !__ofono_atom_get_registered(atom)) {
+		rsp->result.type = STK_RESULT_TYPE_NOT_CAPABLE;
+		return TRUE;
+	}
+
+	ussd = __ofono_atom_get_data(atom);
+	if (__ofono_ussd_is_busy(ussd)) {
+		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+		rsp->result.additional_len = sizeof(busy_on_ussd_result);
+		rsp->result.additional = busy_on_ussd_result;
+		return TRUE;
+	}
+
+	err = __ofono_ussd_initiate(ussd, cmd->send_ussd.ussd_string.dcs,
+					cmd->send_ussd.ussd_string.string,
+					cmd->send_ussd.ussd_string.len,
+					send_ussd_callback, stk);
+
+	if (err >= 0) {
+		stk->cancel_cmd = send_ussd_cancel;
+
+		return FALSE;
+	}
+
+	if (err == -ENOSYS) {
+		rsp->result.type = STK_RESULT_TYPE_NOT_CAPABLE;
+		return TRUE;
+	}
+
+	if (err == -EBUSY) {
+		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+		rsp->result.additional_len = sizeof(busy_on_ussd_result);
+		rsp->result.additional = busy_on_ussd_result;
+		return TRUE;
+	}
+
+	if (cmd->send_ussd.alpha_id && cmd->send_ussd.alpha_id[0])
+		stk_alpha_id_set(stk, cmd->send_ussd.alpha_id);
+
+	return FALSE;
+}
+
+static gboolean handle_command_refresh(const struct stk_command *cmd,
+					struct stk_response *rsp,
+					struct ofono_stk *stk)
+{
+	GSList *l;
+
+	DBG("");
+
+	switch (cmd->qualifier) {
+	case 0:
+		DBG("NAA Initialization and "
+				"Full File Change Notification");
+		break;
+
+	case 1:
+		DBG("File Change Notification");
+		break;
+
+	case 2:
+		DBG("NAA Initialization and File Change Notification");
+		break;
+
+	case 3:
+		DBG("NAA Initialization");
+		break;
+
+	case 4:
+		DBG("UICC Reset");
+		break;
+
+	case 5:
+		DBG("NAA Application Reset");
+		break;
+
+	case 6:
+		DBG("NAA Session Reset");
+		break;
+
+	default:
+		ofono_info("Undefined Refresh qualifier: %d", cmd->qualifier);
+		rsp->result.type = STK_RESULT_TYPE_NOT_CAPABLE;
+		return TRUE;
+	}
+
+	DBG("Files:");
+	for (l = cmd->refresh.file_list; l; l = l->next) {
+		struct stk_file *file = l->data;
+		char buf[17];
+
+		encode_hex_own_buf(file->file, file->len, 0, buf);
+		DBG("%s", buf);
+	}
+
+	DBG("Icon: %d, qualifier: %d", cmd->refresh.icon_id.id,
+					cmd->refresh.icon_id.qualifier);
+	DBG("Alpha ID: %s", cmd->refresh.alpha_id);
+
+	rsp->result.type = STK_RESULT_TYPE_NOT_CAPABLE;
+	return TRUE;
+}
+
 static void stk_proactive_command_cancel(struct ofono_stk *stk)
 {
 	if (stk->immediate_response)
@@ -1738,6 +1965,27 @@ void ofono_stk_proactive_command_notify(struct ofono_stk *stk,
 
 	case STK_COMMAND_TYPE_SETUP_CALL:
 		respond = handle_command_set_up_call(stk->pending_cmd,
+							&rsp, stk);
+		break;
+
+	case STK_COMMAND_TYPE_SEND_USSD:
+		respond = handle_command_send_ussd(stk->pending_cmd,
+							&rsp, stk);
+		break;
+
+	case STK_COMMAND_TYPE_LANGUAGE_NOTIFICATION:
+		/*
+		 * If any clients are interested, then the ISO639
+		 * 2-letter codes has to be convered to language strings.
+		 * Converted language strings has to be added to the
+		 * property list.
+		 */
+		ofono_info("Language Code: %s",
+			stk->pending_cmd->language_notification.language);
+		break;
+
+	case STK_COMMAND_TYPE_REFRESH:
+		respond = handle_command_refresh(stk->pending_cmd,
 							&rsp, stk);
 		break;
 

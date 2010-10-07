@@ -46,9 +46,10 @@
 #define SMS_BACKUP_PATH_FILE SMS_BACKUP_PATH_DIR "/%03i"
 
 #define SMS_SR_BACKUP_PATH STORAGEDIR "/%s/sms_sr"
-#define SMS_SR_BACKUP_PATH_FILE SMS_SR_BACKUP_PATH "/%s-%i"
+#define SMS_SR_BACKUP_PATH_FILE SMS_SR_BACKUP_PATH "/%s-%s"
 
 #define SMS_ADDR_FMT "%24[0-9A-F]"
+#define SMS_MSGID_FMT "%40[0-9A-F]"
 
 static GSList *sms_assembly_add_fragment_backup(struct sms_assembly *assembly,
 					const struct sms *sms, time_t ts,
@@ -1860,7 +1861,7 @@ static gboolean extract_app_port_common(struct sms_udh_iter *iter, int *dst,
 	 * processing at the next information element) any information element
 	 * where the value of the Information-Element-Data is Reserved or not
 	 * supported.
-	*/
+	 */
 	while ((iei = sms_udh_iter_get_ie_type(iter)) !=
 			SMS_IEI_INVALID) {
 		switch (iei) {
@@ -2646,6 +2647,20 @@ void sms_assembly_expire(struct sms_assembly *assembly, time_t before)
 	}
 }
 
+static gboolean sha1_equal(gconstpointer v1, gconstpointer v2)
+{
+	return memcmp(v1, v2, SMS_MSGID_LEN) == 0;
+}
+
+static guint sha1_hash(gconstpointer v)
+{
+	guint h;
+
+	memcpy(&h, v, sizeof(h));
+
+	return h;
+}
+
 static void sr_assembly_load_backup(GHashTable *assembly_table,
 					const char *imsi,
 					const struct dirent *addr_dir)
@@ -2657,7 +2672,8 @@ static void sr_assembly_load_backup(GHashTable *assembly_table,
 	int r;
 	char *assembly_table_key;
 	unsigned int *id_table_key;
-	unsigned int msg_id;
+	char msgid_str[SMS_MSGID_LEN * 2 + 1];
+	unsigned char msgid[SMS_MSGID_LEN];
 
 	if (addr_dir->d_type != DT_REG)
 		return;
@@ -2667,12 +2683,20 @@ static void sr_assembly_load_backup(GHashTable *assembly_table,
 	 * included in the same directory.
 	 * So, SMS-address and message ID are included in the same file name
 	 * Max of SMS address size is 12 bytes, hex encoded
+	 * Max of SMS SHA1 hash is 20 bytes, hex encoded
 	 */
-	if (sscanf(addr_dir->d_name, SMS_ADDR_FMT "-%u",
-				straddr, &msg_id) < 2)
+	if (sscanf(addr_dir->d_name, SMS_ADDR_FMT "-" SMS_MSGID_FMT,
+				straddr, msgid_str) < 2)
 		return;
 
 	if (sms_assembly_extract_address(straddr, &addr) == FALSE)
+		return;
+
+	if (strlen(msgid_str) != 2 * SMS_MSGID_LEN)
+		return;
+
+	if (decode_hex_own_buf(msgid_str, 2 * SMS_MSGID_LEN,
+				NULL, 0, msgid) == NULL)
 		return;
 
 	node = g_new0(struct id_table_node, 1);
@@ -2692,7 +2716,7 @@ static void sr_assembly_load_backup(GHashTable *assembly_table,
 
 	/* Create hashtable keyed by the to address if required */
 	if (id_table == NULL) {
-		id_table = g_hash_table_new_full(g_int_hash, g_int_equal,
+		id_table = g_hash_table_new_full(sha1_hash, sha1_equal,
 							g_free, g_free);
 
 		assembly_table_key = g_strdup(sms_address_to_string(&addr));
@@ -2701,8 +2725,7 @@ static void sr_assembly_load_backup(GHashTable *assembly_table,
 	}
 
 	/* Node ready, create key and add them to the table */
-	id_table_key = g_new0(unsigned int, 1);
-	*id_table_key = msg_id;
+	id_table_key = g_memdup(msgid, SMS_MSGID_LEN);
 
 	g_hash_table_insert(id_table, id_table_key, node);
 }
@@ -2750,10 +2773,11 @@ struct status_report_assembly *status_report_assembly_new(const char *imsi)
 static gboolean sr_assembly_add_fragment_backup(const char *imsi,
 					const struct id_table_node *node,
 					const struct sms_address *addr,
-					unsigned int msg_id)
+					const unsigned char *msgid)
 {
 	int len = sizeof(struct id_table_node);
 	DECLARE_SMS_ADDR_STR(straddr);
+	char msgid_str[SMS_MSGID_LEN * 2 + 1];
 
 	if (!imsi)
 		return FALSE;
@@ -2761,22 +2785,25 @@ static gboolean sr_assembly_add_fragment_backup(const char *imsi,
 	if (sms_address_to_hex_string(addr, straddr) == FALSE)
 		return FALSE;
 
-	/* storagedir/%s/sms_sr/%s-%i */
+	if (encode_hex_own_buf(msgid, SMS_MSGID_LEN, 0, msgid_str) == NULL)
+		return FALSE;
+
+	/* storagedir/%s/sms_sr/%s-%s */
 	if (write_file((unsigned char *) node, len, SMS_BACKUP_MODE,
 			SMS_SR_BACKUP_PATH_FILE, imsi,
-			straddr, msg_id) != len)
+			straddr, msgid_str) != len)
 		return FALSE;
 
 	return TRUE;
 }
 
 static gboolean sr_assembly_remove_fragment_backup(const char *imsi,
-					const struct id_table_node *node,
 					const struct sms_address *addr,
-					unsigned int msg_id)
+					const unsigned char *sha1)
 {
 	char *path;
 	DECLARE_SMS_ADDR_STR(straddr);
+	char msgid_str[SMS_MSGID_LEN * 2 + 1];
 
 	if (!imsi)
 		return FALSE;
@@ -2784,7 +2811,11 @@ static gboolean sr_assembly_remove_fragment_backup(const char *imsi,
 	if (sms_address_to_hex_string(addr, straddr) == FALSE)
 		return FALSE;
 
-	path = g_strdup_printf(SMS_SR_BACKUP_PATH_FILE, imsi, straddr, msg_id);
+	if (encode_hex_own_buf(sha1, SMS_MSGID_LEN, 0, msgid_str) == FALSE)
+		return FALSE;
+
+	path = g_strdup_printf(SMS_SR_BACKUP_PATH_FILE,
+					imsi, straddr, msgid_str);
 
 	unlink(path);
 	g_free(path);
@@ -2819,51 +2850,122 @@ static gboolean sr_st_to_delivered(enum sms_st st, gboolean *delivered)
 	return FALSE;
 }
 
-gboolean status_report_assembly_report(struct status_report_assembly *assembly,
-					const struct sms *status_report,
-					unsigned int *out_id,
-					gboolean *out_delivered)
+static struct id_table_node *find_by_mr_and_mark(GHashTable *id_table,
+						unsigned char mr,
+						GHashTableIter *out_iter,
+						unsigned char **out_id)
 {
-	unsigned int offset = status_report->status_report.mr / 32;
-	unsigned int bit = 1 << (status_report->status_report.mr % 32);
-	struct id_table_node *node = NULL;
-	const char *straddr;
-	GHashTable *id_table;
+	unsigned int offset = mr / 32;
+	unsigned int bit = 1 << (mr % 32);
 	gpointer key, value;
-	gboolean delivered;
-	GHashTableIter iter;
-	gboolean pending;
-	int i;
-	unsigned int msg_id;
+	struct id_table_node *node;
 
-	/* We ignore temporary or tempfinal status reports */
-	if (sr_st_to_delivered(status_report->status_report.st,
-				&delivered) == FALSE)
-		return FALSE;
-
-	straddr = sms_address_to_string(&status_report->status_report.raddr);
-	id_table = g_hash_table_lookup(assembly->assembly_table, straddr);
-
-	/* key (receiver address) does not exist in assembly */
-	if (id_table == NULL)
-		return FALSE;
-
-	g_hash_table_iter_init(&iter, id_table);
-	while (g_hash_table_iter_next(&iter, &key, &value)) {
+	g_hash_table_iter_init(out_iter, id_table);
+	while (g_hash_table_iter_next(out_iter, &key, &value)) {
 		node = value;
 
-		if (node->mrs[offset] & bit)
-			break;
+		/* Address and MR matched */
+		if (node->mrs[offset] & bit) {
+			node->mrs[offset] ^= bit;
+			*out_id = key;
 
-		node = NULL;
+			return node;
+		}
 	}
+
+	return NULL;
+}
+
+/*
+ * Key (receiver address) does not exist in assembly. Some networks can change
+ * address to international format, although address is sent in the national
+ * format. Handle also change from national to international format.
+ * Notify these special cases by comparing only last six digits of the assembly
+ * addresses and received address. If address contains less than six digits,
+ * compare only existing digits.
+ */
+static struct id_table_node *fuzzy_lookup(struct status_report_assembly *assy,
+						const struct sms *sr,
+						const char **out_addr,
+						GHashTableIter *out_iter,
+						unsigned char **out_msgid)
+{
+	GHashTableIter iter_addr;
+	gpointer key, value;
+	const char *r_addr;
+
+	r_addr = sms_address_to_string(&sr->status_report.raddr);
+	g_hash_table_iter_init(&iter_addr, assy->assembly_table);
+
+	while (g_hash_table_iter_next(&iter_addr, &key, &value)) {
+		const char *s_addr = key;
+		GHashTable *id_table = value;
+		unsigned int len, r_len, s_len;
+		unsigned int i;
+		struct id_table_node *node;
+
+		if (r_addr[0] == '+' && s_addr[0] == '+')
+			continue;
+
+		if (r_addr[0] != '+' && s_addr[0] != '+')
+			continue;
+
+		r_len = strlen(r_addr);
+		s_len = strlen(s_addr);
+
+		len = MIN(6, MIN(r_len, s_len));
+
+		for (i = 0; i < len; i++)
+			if (s_addr[s_len - i - 1] != r_addr[r_len - i - 1])
+				break;
+
+		/* Not all digits matched. */
+		if (i < len)
+			continue;
+
+		/* Address matched. Check message reference. */
+		node = find_by_mr_and_mark(id_table, sr->status_report.mr,
+						out_iter, out_msgid);
+		if (node != NULL) {
+			*out_addr = s_addr;
+			return node;
+		}
+	}
+
+	return NULL;
+}
+
+gboolean status_report_assembly_report(struct status_report_assembly *assembly,
+					const struct sms *sr,
+					unsigned char *out_msgid,
+					gboolean *out_delivered)
+{
+	const char *straddr;
+	GHashTable *id_table;
+	GHashTableIter iter;
+	struct sms_address addr;
+	struct id_table_node *node;
+	gboolean delivered;
+	gboolean pending;
+	unsigned char *msgid;
+	int i;
+
+	/* We ignore temporary or tempfinal status reports */
+	if (sr_st_to_delivered(sr->status_report.st, &delivered) == FALSE)
+		return FALSE;
+
+	straddr = sms_address_to_string(&sr->status_report.raddr);
+	id_table = g_hash_table_lookup(assembly->assembly_table, straddr);
+
+	if (id_table != NULL)
+		node = find_by_mr_and_mark(id_table, sr->status_report.mr,
+						&iter, &msgid);
+	else
+		node = fuzzy_lookup(assembly, sr, &straddr, &iter, &msgid);
 
 	/* Unable to find a message reference belonging to this address */
 	if (node == NULL)
 		return FALSE;
-
-	/* Mr belongs to this node. */
-	node->mrs[offset] ^= bit;
 
 	node->deliverable = node->deliverable && delivered;
 
@@ -2880,17 +2982,15 @@ gboolean status_report_assembly_report(struct status_report_assembly *assembly,
 		}
 	}
 
-	msg_id = *(unsigned int *) key;
+	sms_address_from_string(&addr, straddr);
 
 	if (pending == TRUE && node->deliverable == TRUE) {
 		/*
 		 * More status reports expected, and already received
 		 * reports completed. Update backup file.
 		 */
-		sr_assembly_add_fragment_backup(
-					assembly->imsi, node,
-					&status_report->status_report.raddr,
-					msg_id);
+		sr_assembly_add_fragment_backup(assembly->imsi, node,
+						&addr, msgid);
 
 		return FALSE;
 	}
@@ -2898,25 +2998,22 @@ gboolean status_report_assembly_report(struct status_report_assembly *assembly,
 	if (out_delivered)
 		*out_delivered = node->deliverable;
 
-	if (out_id)
-		*out_id = msg_id;
+	if (out_msgid)
+		memcpy(out_msgid, msgid, SMS_MSGID_LEN);
 
-	sr_assembly_remove_fragment_backup(assembly->imsi, node,
-					&status_report->status_report.raddr,
-					msg_id);
-
+	sr_assembly_remove_fragment_backup(assembly->imsi, &addr, msgid);
+	id_table = g_hash_table_iter_get_hash_table(&iter);
 	g_hash_table_iter_remove(&iter);
 
 	if (g_hash_table_size(id_table) == 0)
-		g_hash_table_remove(assembly->assembly_table,
-				status_report->status_report.raddr.address);
+		g_hash_table_remove(assembly->assembly_table, straddr);
 
 	return TRUE;
 }
 
 void status_report_assembly_add_fragment(
 					struct status_report_assembly *assembly,
-					unsigned int msg_id,
+					const unsigned char *msgid,
 					const struct sms_address *to,
 					unsigned char mr, time_t expiration,
 					unsigned char total_mrs)
@@ -2925,31 +3022,30 @@ void status_report_assembly_add_fragment(
 	unsigned int bit = 1 << (mr % 32);
 	GHashTable *id_table;
 	struct id_table_node *node;
-	unsigned int *id_table_key;
+	unsigned char *id_table_key;
 
 	id_table = g_hash_table_lookup(assembly->assembly_table,
 					sms_address_to_string(to));
 
 	/* Create hashtable keyed by the to address if required */
 	if (id_table == NULL) {
-		id_table = g_hash_table_new_full(g_int_hash, g_int_equal,
+		id_table = g_hash_table_new_full(sha1_hash, sha1_equal,
 								g_free, g_free);
 		g_hash_table_insert(assembly->assembly_table,
 					g_strdup(sms_address_to_string(to)),
 					id_table);
 	}
 
-	node = g_hash_table_lookup(id_table, &msg_id);
+	node = g_hash_table_lookup(id_table, msgid);
 
 	/* Create node in the message id hashtable if required */
 	if (node == NULL) {
-		id_table_key = g_new0(unsigned int, 1);
+		id_table_key = g_memdup(msgid, SMS_MSGID_LEN);
 
 		node = g_new0(struct id_table_node, 1);
 		node->total_mrs = total_mrs;
 		node->deliverable = TRUE;
 
-		*id_table_key = msg_id;
 		g_hash_table_insert(id_table, id_table_key, node);
 	}
 
@@ -2957,14 +3053,55 @@ void status_report_assembly_add_fragment(
 	node->mrs[offset] |= bit;
 	node->expiration = expiration;
 	node->sent_mrs++;
-	sr_assembly_add_fragment_backup(assembly->imsi, node, to, msg_id);
+	sr_assembly_add_fragment_backup(assembly->imsi, node, to, msgid);
 }
 
 void status_report_assembly_expire(struct status_report_assembly *assembly,
-					time_t before, GFunc foreach_func,
-					gpointer data)
+					time_t before)
 {
-	/*TODO*/
+	GHashTable *id_table;
+	GHashTableIter iter_addr, iter_node;
+	struct sms_address addr;
+	char *straddr;
+	gpointer key;
+	struct id_table_node *node;
+
+	g_hash_table_iter_init(&iter_addr, assembly->assembly_table);
+
+	/*
+	 * Go through different addresses. Each address can relate to
+	 * 1-n msg_ids.
+	 */
+	while (g_hash_table_iter_next(&iter_addr, (gpointer) &straddr,
+					(gpointer) &id_table)) {
+
+		sms_address_from_string(&addr, straddr);
+		g_hash_table_iter_init(&iter_node, id_table);
+
+		/* Go through different messages. */
+		while (g_hash_table_iter_next(&iter_node, &key,
+						(gpointer) &node)) {
+			/*
+			 * If message is expired, removed it from the
+			 * hash-table and remove the backup-file
+			 */
+			if (node->expiration <= before) {
+				g_hash_table_iter_remove(&iter_node);
+
+				sr_assembly_remove_fragment_backup(
+								assembly->imsi,
+								&addr,
+								key);
+			}
+		}
+
+		/*
+		 * If all messages are removed, remove address
+		 * from the hash-table.
+		 */
+		if (g_hash_table_size(id_table) == 0)
+			g_hash_table_iter_remove(&iter_addr);
+	}
 }
 
 static inline GSList *sms_list_append(GSList *l, const struct sms *in)
@@ -2978,7 +3115,8 @@ static inline GSList *sms_list_append(GSList *l, const struct sms *in)
 	return l;
 }
 
-/* Prepares the text for transmission.  Breaks up into fragments if
+/*
+ * Prepares the text for transmission.  Breaks up into fragments if
  * necessary using ref as the concatenated message reference number.
  * Returns a list of sms messages in order.  If ref_offset is given,
  * then the ref_offset contains the reference number offset or 0
@@ -3273,7 +3411,8 @@ gboolean cbs_decode(const unsigned char *pdu, int len, struct cbs *out)
 	out->max_pages = pdu[5] & 0xf;
 	out->page = (pdu[5] >> 4) & 0xf;
 
-	/* If a mobile receives the code 0000 in either the first field or
+	/*
+	 * If a mobile receives the code 0000 in either the first field or
 	 * the second field then it shall treat the CBS message exactly the
 	 * same as a CBS message with page parameter 0001 0001 (i.e. a single
 	 * page message).
@@ -3441,7 +3580,8 @@ char *cbs_decode_text(GSList *cbs_list, char *iso639_lang)
 	if (cbs_list == NULL)
 		return NULL;
 
-	/* CBS can only come from the network, so we're much less lenient
+	/*
+	 * CBS can only come from the network, so we're much less lenient
 	 * on what we support.  Namely we require the same charset to be
 	 * used across all pages.
 	 */
@@ -3531,7 +3671,8 @@ char *cbs_decode_text(GSList *cbs_list, char *iso639_lang)
 
 			i = iso639 ? 3 : 0;
 
-			/* CR is a padding character, which means we can
+			/*
+			 * CR is a padding character, which means we can
 			 * safely discard everything afterwards
 			 */
 			for (; i < written; i++, bufsize++) {
@@ -3541,7 +3682,8 @@ char *cbs_decode_text(GSList *cbs_list, char *iso639_lang)
 				buf[bufsize] = unpacked[i];
 			}
 
-			/* It isn't clear whether extension sequences
+			/*
+			 * It isn't clear whether extension sequences
 			 * (2 septets) must be wholly present in the page
 			 * and not broken over multiple pages.  The behavior
 			 * is probably the same as SMS, but we don't make
@@ -3552,9 +3694,10 @@ char *cbs_decode_text(GSList *cbs_list, char *iso639_lang)
 			int i = taken;
 			int max_offset = taken + num_ucs2_chars * 2;
 
-			/* It is completely unclear how UCS2 chars are handled
+			/*
+			 * It is completely unclear how UCS2 chars are handled
 			 * especially across pages or when the UDH is present.
-			 * For now do the best we can
+			 * For now do the best we can.
 			 */
 			if (iso639) {
 				i += 2;
@@ -3592,7 +3735,8 @@ static inline gboolean cbs_is_update_newer(unsigned int n, unsigned int o)
 	if (new_update == old_update)
 		return FALSE;
 
-	/* Any Update Number eight or less higher (modulo 16) than the last
+	/*
+	 * Any Update Number eight or less higher (modulo 16) than the last
 	 * received Update Number will be considered more recent, and shall be
 	 * treated as a new CBS message, provided the mobile has not been
 	 * switched off.
@@ -3671,8 +3815,9 @@ static void cbs_assembly_expire(struct cbs_assembly *assembly,
 	GSList *prev;
 	GSList *tmp;
 
-	/* Take care of the case where several updates are being
-	 * reassembled at the same time.  If the newer one is assembled
+	/*
+	 * Take care of the case where several updates are being
+	 * reassembled at the same time. If the newer one is assembled
 	 * first, then the subsequent old update is discarded, make
 	 * sure that we're also discarding the assembly node for the
 	 * partially assembled ones
@@ -3706,7 +3851,8 @@ static void cbs_assembly_expire(struct cbs_assembly *assembly,
 void cbs_assembly_location_changed(struct cbs_assembly *assembly, gboolean plmn,
 					gboolean lac, gboolean ci)
 {
-	/* Location Area wide (in GSM) (which means that a CBS message with the
+	/*
+	 * Location Area wide (in GSM) (which means that a CBS message with the
 	 * same Message Code and Update Number may or may not be "new" in the
 	 * next cell according to whether the next cell is in the same Location
 	 * Area as the current cell), or
@@ -4135,4 +4281,31 @@ char *ussd_decode(int dcs, int len, const unsigned char *data)
 	}
 
 	return utf8;
+}
+
+gboolean ussd_encode(const char *str, long *items_written, unsigned char *pdu)
+{
+	unsigned char *converted = NULL;
+	long written;
+	long num_packed;
+
+	if (!pdu)
+		return FALSE;
+
+	converted = convert_utf8_to_gsm(str, -1, NULL, &written, 0);
+	if (!converted || written > 182) {
+		g_free(converted);
+		return FALSE;
+	}
+
+	pack_7bit_own_buf(converted, written, 0, TRUE, &num_packed, 0, pdu);
+	g_free(converted);
+
+	if (num_packed < 1)
+		return FALSE;
+
+	if (items_written)
+		*items_written = num_packed;
+
+	return TRUE;
 }

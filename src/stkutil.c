@@ -4148,7 +4148,8 @@ static gboolean build_dataobj_text(struct stk_tlv_builder *tlv,
 		return FALSE;
 
 	if (text->yesno == TRUE) {
-		/* Section 6.8.5:
+		/*
+		 * Section 6.8.5:
 		 * When the terminal issues [...] command qualifier set
 		 * to "Yes/No", it shall supply the value "01" when the
 		 * answer is "positive" and the value '00' when the
@@ -4166,6 +4167,31 @@ static gboolean build_dataobj_text(struct stk_tlv_builder *tlv,
 
 	if (ret != TRUE)
 		return ret;
+
+	return stk_tlv_builder_close_container(tlv);
+}
+
+/* Defined in TS 102.223 Section 8.15 - USSD specific case*/
+static gboolean build_dataobj_ussd_text(struct stk_tlv_builder *tlv,
+					const void *data, gboolean cr)
+{
+	const struct stk_ussd_text *text = data;
+	unsigned char tag = STK_DATA_OBJECT_TYPE_TEXT;
+
+	if (text->has_text == FALSE)
+		return TRUE;
+
+	if (stk_tlv_builder_open_container(tlv, cr, tag, TRUE) != TRUE)
+		return FALSE;
+
+	if (text->len > 0) {
+		if (stk_tlv_builder_append_byte(tlv, text->dcs) != TRUE)
+			return FALSE;
+
+		if (stk_tlv_builder_append_bytes(tlv, text->text,
+							text->len) != TRUE)
+			return FALSE;
+	}
 
 	return stk_tlv_builder_close_container(tlv);
 }
@@ -4274,7 +4300,8 @@ static gboolean build_empty_dataobj_location_info(struct stk_tlv_builder *tlv,
 		stk_tlv_builder_close_container(tlv);
 }
 
-/* Described in TS 102.223 Section 8.20
+/*
+ * Described in TS 102.223 Section 8.20
  *
  * See format note in parse_dataobj_imei.
  */
@@ -4837,7 +4864,8 @@ static gboolean build_dataobj_pdp_context_params(struct stk_tlv_builder *tlv,
 		stk_tlv_builder_close_container(tlv);
 }
 
-/* Described in TS 102.223 Section 8.74
+/*
+ * Described in TS 102.223 Section 8.74
  *
  * See format note in parse_dataobj_imeisv.
  */
@@ -4973,8 +5001,10 @@ static gboolean build_dataobj_mms_transfer_status(struct stk_tlv_builder *tlv,
 	const struct stk_mms_transfer_status *mts = data;
 	unsigned char tag = STK_DATA_OBJECT_TYPE_MMS_TRANSFER_STATUS;
 
-	/* Assume the length is never 0 for a valid Result message, however
-	 * the whole data object's presence is conditional.  */
+	/*
+	 * Assume the length is never 0 for a valid Result message, however
+	 * the whole data object's presence is conditional.
+	 */
 	if (mts->len == 0)
 		return TRUE;
 
@@ -5362,7 +5392,8 @@ const unsigned char *stk_pdu_from_response(const struct stk_response *response,
 	if (stk_tlv_builder_close_container(&builder) == FALSE)
 		return NULL;
 
-	/* TS 102 223 section 6.8 states:
+	/*
+	 * TS 102 223 section 6.8 states:
 	 * "For all COMPREHENSION-TLV objects with Min = N, the terminal
 	 * should set the CR flag to comprehension not required."
 	 * All the data objects except "Command Details" and "Result" have
@@ -5456,6 +5487,13 @@ const unsigned char *stk_pdu_from_response(const struct stk_response *response,
 	case STK_COMMAND_TYPE_SEND_DTMF:
 	case STK_COMMAND_TYPE_LANGUAGE_NOTIFICATION:
 	case STK_COMMAND_TYPE_LAUNCH_BROWSER:
+		break;
+	case STK_COMMAND_TYPE_SEND_USSD:
+		ok = build_dataobj(&builder,
+					build_dataobj_ussd_text,
+					DATAOBJ_FLAG_CR,
+					&response->send_ussd.text,
+					NULL);
 		break;
 	default:
 		return NULL;

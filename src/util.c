@@ -535,7 +535,7 @@ static unsigned short unicode_single_shift_lookup(unsigned short k,
  * GSM encoded string in items_read (if not NULL), not including the
  * terminator character. Returns the number of bytes written into the UTF8
  * encoded string in items_written (if not NULL) not including the terminal
- * '\0' character.  The caller is reponsible for freeing the returned value.
+ * '\0' character.  The caller is responsible for freeing the returned value.
  */
 char *convert_gsm_to_utf8_with_lang(const unsigned char *text, long len,
 					long *items_read, long *items_written,
@@ -782,9 +782,9 @@ unsigned char *decode_hex_own_buf(const char *in, long len, long *items_written,
 		c = toupper(in[i]);
 
 		if (c >= '0' && c <= '9')
-			b = b*16 + c - '0';
+			b = b * 16 + c - '0';
 		else if (c >= 'A' && c <= 'F')
-			b = b*16 + 10 + c - 'A';
+			b = b * 16 + 10 + c - 'A';
 		else
 			return NULL;
 
@@ -917,17 +917,21 @@ unsigned char *unpack_7bit_own_buf(const unsigned char *in, long len,
 		/* Figure out the remainder */
 		rest = (in[i] >> bits) & ((1 << (8-bits)) - 1);
 
-		/* We have the entire character, here we don't increate
+		/*
+		 * We have the entire character, here we don't increate
 		 * out if this is we started at an offset.  Instead
-		 * we effectively populate variable rest */
+		 * we effectively populate variable rest
+		 */
 		if (i != 0 || bits == 7)
 			out++;
 
 		if ((out-buf) == max_to_unpack)
 			break;
 
-		/* We expected only 1 bit from this octet, means there's 7
-		 * left, take care of them here */
+		/*
+		 * We expected only 1 bit from this octet, means there's 7
+		 * left, take care of them here
+		 */
 		if (bits == 1) {
 			*out = rest;
 			out++;
@@ -938,7 +942,8 @@ unsigned char *unpack_7bit_own_buf(const unsigned char *in, long len,
 		}
 	}
 
-	/* According to 23.038 6.1.2.3.1, last paragraph:
+	/*
+	 * According to 23.038 6.1.2.3.1, last paragraph:
 	 * "If the total number of characters to be sent equals (8n-1)
 	 * where n=1,2,3 etc. then there are 7 spare bits at the end
 	 * of the message. To avoid the situation where the receiving
@@ -950,7 +955,7 @@ unsigned char *unpack_7bit_own_buf(const unsigned char *in, long len,
 	 * the message ends on an octet boundary with <CR> as the last
 	 * character.
 	 */
-	if (ussd && (((out - buf) % 8) == 0) && (*(out-1) == '\r'))
+	if (ussd && (((out - buf) % 8) == 0) && (*(out - 1) == '\r'))
 			out = out - 1;
 
 	if (terminator)
@@ -1021,7 +1026,8 @@ unsigned char *pack_7bit_own_buf(const unsigned char *in, long len,
 			bits = bits - 1;
 	}
 
-	/* If <CR> is intended to be the last character and the message
+	/*
+	 * If <CR> is intended to be the last character and the message
 	 * (including the wanted <CR>) ends on an octet boundary, then
 	 * another <CR> must be added together with a padding bit 0. The
 	 * receiving entity will perform the carriage return function twice,
@@ -1034,7 +1040,7 @@ unsigned char *pack_7bit_own_buf(const unsigned char *in, long len,
 	if (bits != 7)
 		out++;
 
-	if (ussd && ((total_bits % 8) == 0) && (in[len-1] == '\r')) {
+	if (ussd && ((total_bits % 8) == 0) && (in[len - 1] == '\r')) {
 		*out = '\r';
 		out++;
 	}
@@ -1072,7 +1078,7 @@ unsigned char *pack_7bit(const unsigned char *in, long len, int byte_offset,
 		total_bits += bits;
 
 	/* Round up number of bytes, must append <cr> if true */
-	if (ussd && ((total_bits % 8) == 0) && (in[len-1] == '\r'))
+	if (ussd && ((total_bits % 8) == 0) && (in[len - 1] == '\r'))
 		buf = g_new(unsigned char, (total_bits + 14) / 8);
 	else
 		buf = g_new(unsigned char, (total_bits + 7) / 8);
@@ -1096,7 +1102,8 @@ char *sim_string_to_utf8(const unsigned char *buffer, int length)
 		return NULL;
 
 	if (buffer[0] < 0x80) {
-		/* We have to find the real length, since on SIM file system
+		/*
+		 * We have to find the real length, since on SIM file system
 		 * alpha fields are 0xff padded
 		 */
 		for (i = 0; i < length; i++)
@@ -1260,4 +1267,112 @@ unsigned char *utf8_to_sim_string(const char *utf,
 	g_free(ucs2);
 
 	return result;
+}
+
+/*!
+ * Converts UCS2 encoded text to GSM alphabet. The result is unpacked,
+ * with the 7th bit always 0. If terminator is not 0, a terminator character
+ * is appended to the result.
+ *
+ * Returns the encoded data or NULL if the data could not be encoded. The
+ * data must be freed by the caller. If items_read is not NULL, it contains
+ * the actual number of bytes read. If items_written is not NULL, contains
+ * the number of bytes written.
+ */
+unsigned char *convert_ucs2_to_gsm_with_lang(const unsigned char *text,
+					long len, long *items_read,
+					long *items_written,
+					unsigned char terminator,
+					enum gsm_dialect locking_lang,
+					enum gsm_dialect single_lang)
+{
+	long nchars = 0;
+	const unsigned char *in;
+	unsigned char *out;
+	unsigned char *res = NULL;
+	long res_len;
+	long i;
+
+	if (locking_lang >= GSM_DIALECT_INVALID)
+		return NULL;
+
+	if (single_lang >= GSM_DIALECT_INVALID)
+		return NULL;
+
+	if (len < 1 || len % 2)
+		return NULL;
+
+	in = text;
+	res_len = 0;
+
+	for (i = 0; i < len; i += 2) {
+		gunichar c = (in[i] << 8) | in[i + 1];
+		unsigned short converted = GUND;
+
+		if (c > 0xffff)
+			goto err_out;
+
+		converted = unicode_locking_shift_lookup(c, locking_lang);
+
+		if (converted == GUND)
+			converted = unicode_single_shift_lookup(c, single_lang);
+
+		if (converted == GUND)
+			goto err_out;
+
+		if (converted & 0x1b00)
+			res_len += 2;
+		else
+			res_len += 1;
+
+		nchars += 1;
+	}
+
+	res = g_try_malloc(res_len + (terminator ? 1 : 0));
+	if (!res)
+		goto err_out;
+
+	in = text;
+	out = res;
+
+	for (i = 0; i < len; i += 2) {
+		gunichar c = (in[i] << 8) | in[i + 1];
+		unsigned short converted = GUND;
+
+		converted = unicode_locking_shift_lookup(c, locking_lang);
+
+		if (converted == GUND)
+			converted = unicode_single_shift_lookup(c, single_lang);
+
+		if (converted & 0x1b00) {
+			*out = 0x1b;
+			++out;
+		}
+
+		*out = converted;
+		++out;
+	}
+
+	if (terminator)
+		*out = terminator;
+
+	if (items_written)
+		*items_written = out - res;
+
+err_out:
+	if (items_read)
+		*items_read = i;
+
+	return res;
+}
+
+unsigned char *convert_ucs2_to_gsm(const unsigned char *text, long len,
+				long *items_read, long *items_written,
+				unsigned char terminator)
+{
+	return convert_ucs2_to_gsm_with_lang(text, len, items_read,
+						items_written,
+						terminator,
+						GSM_DIALECT_DEFAULT,
+						GSM_DIALECT_DEFAULT);
 }

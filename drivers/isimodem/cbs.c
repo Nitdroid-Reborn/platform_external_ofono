@@ -50,15 +50,15 @@ struct cbs_data {
 static void isi_set_topics(struct ofono_cbs *cbs, const char *topics,
 				ofono_cbs_set_cb_t cb, void *data)
 {
-	DBG("Not implemented (topics=%s)", topics);
-	CALLBACK_WITH_FAILURE(cb, data);
+	DBG("Not implemented (topics=%s), all topics accepted", topics);
+	CALLBACK_WITH_SUCCESS(cb, data);
 }
 
 static void isi_clear_topics(struct ofono_cbs *cbs,
 				ofono_cbs_set_cb_t cb, void *data)
 {
 	DBG("Not implemented");
-	CALLBACK_WITH_FAILURE(cb, data);
+	CALLBACK_WITH_SUCCESS(cb, data);
 }
 
 static void routing_ntf_cb(GIsiClient *client,
@@ -71,7 +71,15 @@ static void routing_ntf_cb(GIsiClient *client,
 	if (!msg || len < 3 || msg[0] != SMS_GSM_CB_ROUTING_NTF)
 		return;
 
-	ofono_cbs_notify(cbs, msg+5, len-5);
+	/* Skipping header(s) */
+	msg += 5;
+	len -= 5;
+
+	/*
+	 * The next 88 bytes of the sub-block are the actual CBS PDU,
+	 * followed by an informational data length field, and filler.
+	 */
+	ofono_cbs_notify(cbs, msg, len - 2);
 }
 
 static gboolean routing_resp_cb(GIsiClient *client,

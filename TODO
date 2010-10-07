@@ -26,7 +26,7 @@ SMS
   Proposed solution is to convert such messages to HTML and embed image /
   sound data as embedded MIME in the generated HTML stream.  The EMS messages
   will have to be detected (by the presence of particular tags in the SMS)
-  and signaled seperately from simple SMS messages.
+  and signaled separately from simple SMS messages.
 
   Priority: Low
   Complexity: C8
@@ -80,30 +80,6 @@ SMS
   Complexity: C1
   Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
 
-- Better unique ID for incoming / outgoing messages.  Currently oFono uses
-  a simple incremental counter stored in the settings store (NextMessageId).
-  This tends to break quite easily in strange situations (e.g. forced battery
-  removal, unexpected crashes).  This makes the uniqueness of this ID not
-  always guaranteed.
-
-  Proposed solution is to base the ID on SHA1 or MD5 hash.  Hash the contents
-  of the message + reception / sent time and the sender / originator address.
-
-  Priority: High
-  Complexity: C1
-
-- SMS Status Report support support according to 3GPP 23.040.  oFono should
-  support SMS start reports.  For fragmented SMS messages oFono should take
-  care of collating the status reports for each fragment and notifying once
-  all fragments are received.
-
-  SMS call history should be updated with support of SMS 'delivered' or
-  'undeliverable' status.
-
-  Priority: Medium
-  Complexity: C4
-  Owner: Petteri Tikander <petteri.tikander@ixonos.com>
-
 
 SIM / SIM File system
 =====================
@@ -136,7 +112,7 @@ SIM / SIM File system
   Priority: Low
   Complexity: C2
 
-- Support proprietory extensions for SIM PIN retry counter.  Most vendors
+- Support proprietary extensions for SIM PIN retry counter.  Most vendors
   provide an extension commands to obtain such a retry counter for PINs and
   PUKs.  Need to enable this as a property in oFono.
 
@@ -232,12 +208,6 @@ GPRS
   Priority: High
   Complexity: C2
 
-- Add support for GPRS suspended event.  Expose this to the UI by adding a new
-  'Suspended' property on the DataConnectionManager D-Bus interface.
-
-  Priority: High
-  Complexity: C1
-
 - Add support for IPv6 GPRS contexts.
 
   Priority: Medium
@@ -331,40 +301,6 @@ Voicecall
 Sim Toolkit
 ===========
 
-- Support Display Text proactive command.  This should be implemented
-  by making the appropriate call into the SimToolkitAgent.  This functionality
-  should support normal and high-priority messages; packed gsm, unpacked
-  gsm and ucs2 encoded strings; and immediate response command type.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
-- Support Get Inkey proactive command.  This should be implemented by
-  making the appropriate call into the SimToolkitAgent.  This functionality
-  should support digits only, gsm alphabet only and ucs2 alphabet only
-  user responses.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
-- Support Get Input proactive command.  This should be implemented by
-  making the appropriate call into the SimToolkitAgent.  This functionality
-  should support digits only; packed gsm, unpacked gsm and ucs2 encoded
-  responses; and opaque (e.g. password) user input.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
-- Support More Time proactive command.  This command should essentially
-  have no effect.
-
-  Priority: High
-  Complexity: C1
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
 - Support the Play Tone proactive command.  This should be implemented
   by making the appropriate call into the SimToolkitAgent.  The sound
   that will be played will be determined by the agent based on the sound
@@ -408,23 +344,6 @@ Sim Toolkit
   Priority: High
   Complexity: C8
 
-- Support Setup Menu proactive command.  This should be supported by exporting
-  the main menu as a set of attributes on the SimToolkit interface.  Both
-  icons, menu items and the Alpha identifier should be exposed.  Support of
-  this command implies support of the 'Menu Selection' Envelope.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
-- Support Select Item proactive command.  This should be implemented by
-  making the appropriate call into the SimToolkitAgent.  Both icons, menu
-  items and the Alpha identifier should be sent to the agent.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
 - Support Send Short Message proactive command.
 
   Priority: High
@@ -452,23 +371,6 @@ Sim Toolkit
   Priority: High
   Complexity: C8
 
-- Support Timer Management proactive command.  This should be handled
-  completely internally to oFono and does not require any UI interaction.
-  Support of this proactive command implies support of the 'Timer Expiration'
-  Envelope.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
-- Support Set Up Idle Mode Text proactive command.  The idle mode text
-  should be exposed on the SimToolkit interface as a property.  The property
-  changed signal should be emitted whenever the idle mode text string changes.
-
-  Priority: High
-  Complexity: C2
-  Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
-
 - Support Send DTMF proactive command.  The DTMF characters are passed
   directly to the voicecall atom and the SimToolkitAgent is notified if the
   USIM has indicated it is acceptable to inform the user.
@@ -481,15 +383,6 @@ Sim Toolkit
   will be sent to the SIM via an SMS-PP Download Envelope.  No user interaction
   will be required.  If the modem hardware supports this transparently, then
   no indication to oFono will be necessary.
-
-  Priority: High
-  Complexity: C2
-
-- Support 'CBS-PP' Download Envelope.  Whenever a cell broadcast on a channel
-  listed in EFcbmid is received, this broadcast will be sent to the SIM via
-  a CBS-PP Download Envelope. No user interaction will be required.  If the
-  modem hardware supports this transparently, then no indication to oFono
-  will be necessary.
 
   Priority: High
   Complexity: C2
@@ -509,6 +402,19 @@ Sim Toolkit
   Priority: High
   Complexity: C2
   Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
+
+- Support Language Notification proactive command.
+
+  Priority: Medium
+  Complexity: C1
+  Owner: Jeevaka Badrappan <jeevaka.badrappan@elektrobit.com>
+
+- Send HTML formatted text elements for all proactive commands, if the
+  proactive command supplies Text Attribute objects.  The stk_text_to_html
+  utility function can be used to convert raw text into HTML.
+
+  Priority: Low
+  Complexity: C2
 
 
 Emergency Calls
@@ -611,11 +517,15 @@ Miscellaneous
   Priority: Medium
   Complexity: C2
 
-- Add a property for Automatic Idle (sometimes referred to as Fast Dormancy)
-  in the RadioSettings atom.  This property will enable or disable the use of
-  automatic connection release by the modem for power consumption reasons.
-  This is a major power-saving feature for phones, but can be ignored for USB
-  sticks or PCI devices.
+- Add a property for Fast Dormancy in the RadioSettings atom. This property
+  will enable or disable Fast Dormancy. Fast Dormancy refers to UE initiated
+  release of radio resources quickly after a burst of data transfer has ended.
+  Normally, radio resources are released by the network after a timeout
+  configured by the network operator. Fast Dormancy allows the modem to release
+  radio resources more quickly. Typically, fast dormancy would be enabled
+  if no data transfer is predicted to occur in the near future (e.g. end user
+  is not actively using the device). This is a major power-saving feature for
+  mobile devices, but can be ignored for USB sticks or PCI devices.
 
   If the modem does not support such a feature the property should never be
   exposed to the user.
@@ -625,6 +535,7 @@ Miscellaneous
 
   Priority: High
   Complexity: C1
+  Owner: Mika Liljeberg <mika.liljeberg@nokia.com>
 
 - TTY (hearing impaired) support.  Add a new oFono atom type that will enable
   the user to enable or disable the TTY support on the modem.  Support for

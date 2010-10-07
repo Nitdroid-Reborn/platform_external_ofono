@@ -1,7 +1,7 @@
 /*
  * This file is part of oFono - Open Source Telephony
  *
- * Copyright (C) 2010  Nokia Corporation and/or its subsidary(-ies).
+ * Copyright (C) 2010  Nokia Corporation and/or its subsidiary(-ies).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -59,7 +59,7 @@ static void detach_ind_cb(GIsiClient *client,
 				const void *restrict data, size_t len,
 				uint16_t object, void *opaque)
 {
-	/*struct ofono_gprs *gprs = opaque;*/
+	struct ofono_gprs *gprs = opaque;
 	const unsigned char *msg = data;
 
 	if (!msg || len < 3 || msg[0] != GPDS_DETACH_IND)
@@ -68,8 +68,56 @@ static void detach_ind_cb(GIsiClient *client,
 	DBG("detached: %s (0x%02"PRIx8")",
 		gpds_isi_cause_name(msg[1]), msg[1]);
 
-	/* TODO: Don't report this to core, it won't ever reattach */
-	/*ofono_gprs_detached_notify(gprs);*/
+	ofono_gprs_detached_notify(gprs);
+}
+
+static void suspend_notify(struct ofono_gprs *gprs, uint8_t suspend_status,
+			uint8_t suspend_cause)
+{
+	int cause;
+
+	DBG("transfer status: %s (0x%02"PRIx8") cause %s (0x%02"PRIx8")",
+		gpds_transfer_status_name(suspend_status), suspend_status,
+		gpds_transfer_cause_name(suspend_cause), suspend_cause);
+
+	if (suspend_status == GPDS_TRANSFER_AVAIL) {
+		ofono_gprs_resume_notify(gprs);
+		return;
+	}
+
+	switch (suspend_cause) {
+	case GPDS_TRANSFER_CAUSE_SUSPENDED_NO_COVERAGE:
+		cause = GPRS_SUSPENDED_NO_COVERAGE;
+		break;
+
+	case GPDS_TRANSFER_CAUSE_SUSPENDED_CALL:
+		cause = GPRS_SUSPENDED_CALL;
+		break;
+
+	case GPDS_TRANSFER_CAUSE_SUSPENDED_CALL_SMS:
+	case GPDS_TRANSFER_CAUSE_SUSPENDED_RAU:
+	case GPDS_TRANSFER_CAUSE_SUSPENDED_LU:
+		cause = GPRS_SUSPENDED_SIGNALLING;
+		break;
+
+	default:
+		return;
+	}
+
+	ofono_gprs_suspend_notify(gprs, cause);
+}
+
+static void transfer_status_ind_cb(GIsiClient *client,
+					const void *restrict data, size_t len,
+					uint16_t object, void *opaque)
+{
+	struct ofono_gprs *gprs = opaque;
+	const unsigned char *msg = data;
+
+	if (!msg || len < 3 || msg[0] != GPDS_TRANSFER_STATUS_IND)
+		return;
+
+	suspend_notify(gprs, msg[1], msg[2]);
 }
 
 static gboolean isi_gprs_register(gpointer user)
@@ -83,6 +131,8 @@ static gboolean isi_gprs_register(gpointer user)
 		g_isi_client_set_debug(gd->client, gpds_debug, NULL);
 
 	g_isi_subscribe(gd->client, GPDS_DETACH_IND, detach_ind_cb, gprs);
+	g_isi_subscribe(gd->client, GPDS_TRANSFER_STATUS_IND,
+			transfer_status_ind_cb, gprs);
 
 	ofono_gprs_register(user);
 
@@ -258,6 +308,7 @@ static gboolean status_resp_cb(GIsiClient *client,
 	const unsigned char *msg = data;
 	struct isi_cb_data *cbd = opaque;
 	ofono_gprs_status_cb_t cb = cbd->cb;
+	struct ofono_gprs *gprs = cbd->data;
 	int status;
 
 	if (!msg) {
@@ -265,7 +316,7 @@ static gboolean status_resp_cb(GIsiClient *client,
 		goto error;
 	}
 
-	if (len < 2 || msg[0] != GPDS_STATUS_RESP)
+	if (len < 13 || msg[0] != GPDS_STATUS_RESP)
 		return FALSE;
 
 	/* FIXME: the core still expects reg status, and not a boolean
@@ -280,6 +331,8 @@ static gboolean status_resp_cb(GIsiClient *client,
 	default:
 		status = GPRS_STAT_UNKNOWN;
 	}
+
+	suspend_notify(gprs, msg[11], msg[12]);
 
 	CALLBACK_WITH_SUCCESS(cb, status, cbd->data);
 

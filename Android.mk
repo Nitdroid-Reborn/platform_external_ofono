@@ -43,6 +43,7 @@ LOCAL_SRC_FILES:= \
 	gisi/verify.c \
 	gisi/server.c \
 	drivers/isimodem/isimodem.c \
+	drivers/isimodem/audio-settings.c \
 	drivers/isimodem/debug.c \
 	drivers/isimodem/radio-settings.c \
 	drivers/isimodem/infoserver.c \
@@ -66,6 +67,7 @@ LOCAL_SRC_FILES:= \
 	plugins/n900gpio.c \
 	plugins/n900gpio.h \
 	src/main.c \
+	src/audio-settings.c \
 	src/common.c \
 	src/idmap.c \
 	src/log.c \

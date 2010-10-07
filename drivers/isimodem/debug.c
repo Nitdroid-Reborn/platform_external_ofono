@@ -70,6 +70,19 @@ const char *ss_message_id_name(enum ss_message_id value)
 	return "SS_<UNKNOWN>";
 }
 
+const char *ss_ussd_type_name(enum ss_ussd_type value)
+{
+	switch (value) {
+		_(SS_GSM_USSD_MT_REPLY);
+		_(SS_GSM_USSD_COMMAND);
+		_(SS_GSM_USSD_REQUEST);
+		_(SS_GSM_USSD_NOTIFY);
+		_(SS_GSM_USSD_END);
+	}
+	return "SS_<UNKNOWN>";
+}
+
+
 const char *ss_subblock_name(enum ss_subblock value)
 {
 	switch (value) {
@@ -975,6 +988,31 @@ const char *gpds_isi_cause_name(enum gpds_isi_cause value)
 		_(GPDS_CAUSE_ACCESS_BARRED);
 		_(GPDS_CAUSE_FATAL_FAILURE);
 		_(GPDS_CAUSE_AUT_FAILURE);
+	}
+	return "GPDS_<UNKNOWN>";
+}
+
+const char *gpds_transfer_status_name(enum gpds_transfer_status value)
+{
+	switch (value) {
+		_(GPDS_TRANSFER_NOT_AVAIL);
+		_(GPDS_TRANSFER_AVAIL);
+	}
+	return "GPDS_<UNKNOWN>";
+}
+
+const char *gpds_transfer_cause_name(enum gpds_transfer_cause value)
+{
+	switch (value) {
+		_(GPDS_TRANSFER_CAUSE_ATTACHED);
+		_(GPDS_TRANSFER_CAUSE_DETACHED);
+		_(GPDS_TRANSFER_CAUSE_RESUMED);
+		_(GPDS_TRANSFER_CAUSE_SUSPENDED_NO_COVERAGE);
+		_(GPDS_TRANSFER_CAUSE_SUSPENDED_CALL_SMS);
+		_(GPDS_TRANSFER_CAUSE_SUSPENDED_CALL);
+		_(GPDS_TRANSFER_CAUSE_SUSPENDED_RAU);
+		_(GPDS_TRANSFER_CAUSE_SUSPENDED_LU);
+		_(GPDS_TRANSFER_CAUSE_DSAC_RESTRICTION);
 	}
 	return "GPDS_<UNKNOWN>";
 }

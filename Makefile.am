@@ -26,6 +26,12 @@ dbusconfdir = @DBUS_CONFDIR@
 
 dbusconf_DATA = src/ofono.conf
 
+if SYSTEMD
+systemdunitdir = @SYSTEMD_UNITDIR@
+
+systemdunit_DATA = src/ofono.service
+endif
+
 confdir = $(sysconfdir)/ofono
 
 conf_DATA =
@@ -361,6 +367,7 @@ test_scripts = test/backtrace \
 		test/enter-pin \
 		test/hangup-all \
 		test/hangup-active \
+		test/set-roaming-allowed \
 		test/set-context \
 		test/list-contexts \
 		test/list-modems \

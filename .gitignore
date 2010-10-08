@@ -25,6 +25,7 @@ autom4te.cache
 include/ofono
 src/builtin.h
 src/ofonod
+src/ofono.service
 
 plugins/*-ofono.rules
 

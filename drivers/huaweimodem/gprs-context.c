@@ -50,6 +50,7 @@ struct gprs_context_data {
 	GAtChat *chat;
 	unsigned int active_context;
 	unsigned int dhcp_source;
+	unsigned int dhcp_count;
 	union {
 		ofono_gprs_context_cb_t down_cb;	/* Down callback */
 		ofono_gprs_context_up_cb_t up_cb;	/* Up callback */
@@ -64,8 +65,13 @@ static gboolean dhcp_poll(gpointer user_data)
 	struct ofono_gprs_context *gc = user_data;
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 
-	check_dhcp(gc);
+	if (gcd->dhcp_count > 10)
+		CALLBACK_WITH_FAILURE(gcd->up_cb, NULL, 0, NULL, NULL,
+						NULL, NULL, gcd->cb_data);
+	else
+		check_dhcp(gc);
 
+	gcd->dhcp_count++;
 	gcd->dhcp_source = 0;
 
 	return FALSE;
@@ -103,6 +109,8 @@ static void dhcp_query_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	char *dns1 = NULL;
 	char *dns2 = NULL;
 	const char *dns[3];
+	struct ofono_modem *modem;
+	const char *devnode;
 
 	DBG("");
 
@@ -131,6 +139,11 @@ static void dhcp_query_cb(gboolean ok, GAtResult *result, gpointer user_data)
 							gcd->active_context);
 	ofono_info("IP: %s, Gateway: %s", ip, gateway);
 	ofono_info("DNS: %s, %s", dns1, dns2);
+
+	modem = ofono_gprs_context_get_modem(gc);
+	devnode = ofono_modem_get_string(modem, "NDIS");
+
+	ofono_info("NDIS: %s", devnode);
 
 	interface = "invalid";
 
@@ -188,6 +201,8 @@ static void at_ndisdup_up_cb(gboolean ok, GAtResult *result,
 	if (ok) {
 		gcd->up_cb = cb;
 		gcd->cb_data = cbd->data;
+
+		gcd->dhcp_count = 0;
 
 		check_dhcp(gc);
 		return;

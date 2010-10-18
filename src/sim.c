@@ -43,6 +43,7 @@
 #include "simutil.h"
 #include "storage.h"
 #include "simfs.h"
+#include "stkutil.h"
 
 static GSList *g_drivers = NULL;
 
@@ -89,6 +90,8 @@ struct ofono_sim {
 	struct ofono_watchlist *state_watches;
 
 	struct sim_fs *simfs;
+
+	unsigned char *iidf_image;
 
 	DBusMessage *pending;
 	const struct ofono_sim_driver *driver;
@@ -721,6 +724,181 @@ static DBusMessage *sim_enter_pin(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static void sim_get_image_cb(struct ofono_sim *sim,
+				unsigned char id, char *xpm, gboolean cache)
+{
+	DBusMessage *reply;
+	DBusMessageIter iter, array;
+	int xpm_len;
+
+	if (xpm == NULL) {
+		reply = __ofono_error_failed(sim->pending);
+		__ofono_dbus_pending_reply(&sim->pending, reply);
+		return;
+	}
+
+	xpm_len = strlen(xpm);
+
+	reply = dbus_message_new_method_return(sim->pending);
+	dbus_message_iter_init_append(reply, &iter);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_BYTE_AS_STRING, &array);
+
+	dbus_message_iter_append_fixed_array(&array, DBUS_TYPE_BYTE,
+						&xpm, xpm_len);
+	dbus_message_iter_close_container(&iter, &array);
+
+	__ofono_dbus_pending_reply(&sim->pending, reply);
+
+	if (cache)
+		sim_fs_cache_image(sim->simfs, (const char *) xpm, id);
+
+	g_free(xpm);
+}
+
+static void sim_iidf_read_clut_cb(int ok, int length, int record,
+					const unsigned char *data,
+					int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+	unsigned char id;
+	unsigned char *efimg;
+	unsigned short iidf_len;
+	unsigned short clut_len;
+	char *xpm;
+
+	DBG("ok: %d", ok);
+
+	dbus_message_get_args(sim->pending, NULL, DBUS_TYPE_BYTE, &id,
+					DBUS_TYPE_INVALID);
+	id -= 1;
+	efimg = &sim->efimg[id * 9];
+
+	if (!ok) {
+		sim_get_image_cb(sim, id, NULL, FALSE);
+		goto done;
+	}
+
+	iidf_len = efimg[7] << 8 | efimg[8];
+
+	if (sim->iidf_image[3] == 0)
+		clut_len = 256 * 3;
+	else
+		clut_len = sim->iidf_image[3] * 3;
+
+	xpm = stk_image_to_xpm(sim->iidf_image, iidf_len, efimg[2],
+					data, clut_len);
+	sim_get_image_cb(sim, id, xpm, TRUE);
+
+done:
+	g_free(sim->iidf_image);
+	sim->iidf_image = NULL;
+}
+
+static void sim_iidf_read_cb(int ok, int length, int record,
+				const unsigned char *data,
+				int record_length, void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+	unsigned char id;
+	unsigned char *efimg;
+	unsigned short iidf_id;
+	unsigned short offset;
+	unsigned short clut_len;
+
+	DBG("ok: %d", ok);
+
+	dbus_message_get_args(sim->pending, NULL, DBUS_TYPE_BYTE, &id,
+					DBUS_TYPE_INVALID);
+	id -= 1;
+	efimg = &sim->efimg[id * 9];
+
+	if (!ok) {
+		sim_get_image_cb(sim, id, NULL, FALSE);
+		return;
+	}
+
+	if (efimg[2] == STK_IMG_SCHEME_BASIC) {
+		char *xpm = stk_image_to_xpm(data, length, efimg[2], NULL, 0);
+		sim_get_image_cb(sim, id, xpm, TRUE);
+		return;
+	}
+
+	offset = data[4] << 8 | data[5];
+
+	if (data[3] == 0)
+		clut_len = 256 * 3;
+	else
+		clut_len = data[3] * 3;
+
+	iidf_id = efimg[3] << 8 | efimg[4];
+	sim->iidf_image = g_memdup(data, length);
+
+	/* read the clut data */
+	ofono_sim_read_bytes(sim, iidf_id, offset, clut_len,
+					sim_iidf_read_clut_cb, sim);
+}
+
+static void sim_get_image(struct ofono_sim *sim, unsigned char id,
+				gpointer user_data)
+{
+	unsigned char *efimg;
+	char *image;
+	unsigned short iidf_id;
+	unsigned short iidf_offset;
+	unsigned short iidf_len;
+
+	image = sim_fs_get_cached_image(sim->simfs, id);
+
+	if (image != NULL) {
+		sim_get_image_cb(sim, id, image, FALSE);
+		return;
+	}
+
+	if (sim->efimg_length <= (id * 9)) {
+		sim_get_image_cb(sim, id, NULL, FALSE);
+		return;
+	}
+
+	efimg = &sim->efimg[id * 9];
+
+	iidf_id = efimg[3] << 8 | efimg[4];
+	iidf_offset = efimg[5] << 8 | efimg[6];
+	iidf_len = efimg[7] << 8 | efimg[8];
+
+	/* read the image data */
+	ofono_sim_read_bytes(sim, iidf_id, iidf_offset, iidf_len,
+				sim_iidf_read_cb, sim);
+}
+
+static DBusMessage *sim_get_icon(DBusConnection *conn,
+					DBusMessage *msg, void *data)
+{
+	struct ofono_sim *sim = data;
+	unsigned char id;
+
+	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_BYTE, &id,
+					DBUS_TYPE_INVALID) == FALSE)
+		return __ofono_error_invalid_args(msg);
+
+	/* zero means no icon */
+	if (id == 0)
+		return __ofono_error_invalid_args(msg);
+
+	if (sim->pending)
+		return __ofono_error_busy(msg);
+
+	if (sim->efimg == NULL)
+		return __ofono_error_not_implemented(msg);
+
+	sim->pending = dbus_message_ref(msg);
+
+	sim_get_image(sim, id - 1, sim);
+
+	return NULL;
+}
+
 static DBusMessage *sim_reset_pin(DBusConnection *conn, DBusMessage *msg,
 					void *data)
 {
@@ -772,6 +950,8 @@ static GDBusMethodTable sim_methods[] = {
 	{ "LockPin",		"ss",	"",		sim_lock_pin,
 							G_DBUS_METHOD_FLAG_ASYNC },
 	{ "UnlockPin",		"ss",	"",		sim_unlock_pin,
+							G_DBUS_METHOD_FLAG_ASYNC },
+	{ "GetIcon",		"y",	"ay",		sim_get_icon,
 							G_DBUS_METHOD_FLAG_ASYNC },
 	{ }
 };
@@ -1601,11 +1781,6 @@ static void sim_inserted_update(struct ofono_sim *sim)
 
 static void sim_free_state(struct ofono_sim *sim)
 {
-	if (sim->simfs) {
-		sim_fs_free(sim->simfs);
-		sim->simfs = NULL;
-	}
-
 	if (sim->iccid) {
 		g_free(sim->iccid);
 		sim->iccid = NULL;
@@ -1665,6 +1840,9 @@ static void sim_free_state(struct ofono_sim *sim)
 		sim->efimg = NULL;
 		sim->efimg_length = 0;
 	}
+
+	g_free(sim->iidf_image);
+	sim->iidf_image = NULL;
 }
 
 void ofono_sim_inserted_notify(struct ofono_sim *sim, ofono_bool_t inserted)
@@ -1802,6 +1980,11 @@ static void sim_remove(struct ofono_atom *atom)
 		sim->driver->remove(sim);
 
 	sim_free_state(sim);
+
+	if (sim->simfs) {
+		sim_fs_free(sim->simfs);
+		sim->simfs = NULL;
+	}
 
 	g_free(sim);
 }

@@ -342,19 +342,19 @@ int mmi_service_code_to_bearer_class(int code)
 	case 20:
 		cls = BEARER_CLASS_DATA_ASYNC | BEARER_CLASS_DATA_SYNC;
 		break;
-	/* According to 22.030: All Async */
+	/* According to 22.030: All Async (7) */
 	case 21:
-	/* According to 22.030: All Data Async */
+	/* According to 22.030: All Data Async (7)*/
 	case 25:
 		cls = BEARER_CLASS_DATA_ASYNC;
 		break;
-	/* According to 22.030: All Sync */
+	/* According to 22.030: All Sync (8) */
 	case 22:
-	/* According to 22.030: All Data Sync */
+	/* According to 22.030: All Data Sync (8) */
 	case 24:
 		cls = BEARER_CLASS_DATA_SYNC;
 		break;
-	/* According to 22.030: Telephony & All Sync services */
+	/* According to 22.030: Telephony & All Sync services (1, 8) */
 	case 26:
 		cls = BEARER_CLASS_VOICE | BEARER_CLASS_DATA_SYNC;
 		break;
@@ -393,7 +393,7 @@ void string_to_phone_number(const char *str, struct ofono_phone_number *ph)
 	}
 }
 
-int valid_ussd_string(const char *str)
+gboolean valid_ussd_string(const char *str, gboolean call_in_progress)
 {
 	int len = strlen(str);
 
@@ -401,44 +401,38 @@ int valid_ussd_string(const char *str)
 		return FALSE;
 
 	/*
-	 * It is hard to understand exactly what constitutes a valid USSD string
-	 * According to 22.090:
-	 * Case a - 1, 2 or 3 digits from the set (*, #) followed by 1X(Y),
-	 * where X=any number 0‑4, Y=any number 0‑9, then, optionally "*
-	 * followed by any number of any characters", and concluding with #SEND
+	 * Return true if an MMI input string is to be sent as USSD.
 	 *
-	 * Case b - 1, 2 or 3 digits from the set (*, #) followed by 1X(Y),
-	 * where X=any number 5‑9, Y=any number 0‑9, then, optionally "*
-	 * followed by any number of any characters", and concluding with #SEND
+	 * According to 3GPP TS 22.030, after checking the well-known
+	 * supplementary service control, SIM control and manufacturer
+	 * defined control codes, the terminal should check if the input
+	 * should be sent as USSD according to the following rules:
 	 *
-	 * Case c - 7(Y) SEND, where Y=any number 0‑9
+	 * 1) Terminated by '#'
+	 * 2) A short string of 1 or 2 digits
 	 *
-	 * Case d - All other formats
-	 *
-	 * According to 22.030 Figure 3.5.3.2 USSD strings can be:
-	 *
-	 * Supplementary service control
-	 * SIM control
-	 * Manufacturer defined
-	 * Terminated by '#'
-	 * Short String - This can be any 2 digit short string.  If the string
-	 *                starts with a '1' and no calls are in progress then
-	 *                this string is treated as a call setup request
-	 *
-	 * Everything else is not a valid USSD string
+	 * As an exception, if a 2 digit string starts with a '1' and
+	 * there are no calls in progress then this string is treated as
+	 * a call setup request instead.
 	 */
 
-	if (len != 2 && str[len-1] != '#')
+	if (str[len-1] == '#')
+		return TRUE;
+
+	if (!call_in_progress && len == 2 && str[0] != '1')
 		return FALSE;
 
-	return TRUE;
+	if (len <= 2)
+		return TRUE;
+
+	return FALSE;
 }
 
 const char *ss_control_type_to_string(enum ss_control_type type)
 {
 	switch (type) {
 	case SS_CONTROL_TYPE_ACTIVATION:
-		return "acivation";
+		return "activation";
 	case SS_CONTROL_TYPE_REGISTRATION:
 		return "registration";
 	case SS_CONTROL_TYPE_QUERY:

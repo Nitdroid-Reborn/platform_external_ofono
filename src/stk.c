@@ -70,8 +70,9 @@ struct ofono_stk {
 	gboolean respond_on_exit;
 	ofono_bool_t immediate_response;
 	guint remove_agent_source;
-	struct sms_submit_req *sms_submit_req;
+	struct extern_req *extern_req;
 	char *idle_mode_text;
+	struct stk_icon_id idle_mode_icon;
 	struct timeval get_inkey_start_ts;
 };
 
@@ -83,7 +84,7 @@ struct envelope_op {
 			const unsigned char *data, int length);
 };
 
-struct sms_submit_req {
+struct extern_req {
 	struct ofono_stk *stk;
 	gboolean cancelled;
 };
@@ -256,19 +257,32 @@ void __ofono_cbs_sim_download(struct ofono_stk *stk, const struct cbs *msg)
 }
 
 static struct stk_menu *stk_menu_create(const char *title,
-		const struct stk_text_attribute *title_attr, GSList *items,
+		const struct stk_text_attribute *title_attr,
+		const struct stk_icon_id *icon, GSList *items,
 		const struct stk_item_text_attribute_list *item_attrs,
+		const struct stk_item_icon_id_list *item_icon_ids,
 		int default_id, gboolean soft_key, gboolean has_help)
 {
-	struct stk_menu *ret = g_new(struct stk_menu, 1);
+	unsigned int len = g_slist_length(items);
+	struct stk_menu *ret;
 	GSList *l;
 	int i;
 
 	DBG("");
 
+	if (item_attrs && item_attrs->len && item_attrs->len != len * 4)
+		return NULL;
+
+	if (item_icon_ids && item_icon_ids->len && item_icon_ids->len != len)
+		return NULL;
+
+	ret = g_try_new(struct stk_menu, 1);
+	if (ret == NULL)
+		return NULL;
+
 	ret->title = g_strdup(title ? title : "");
-	ret->icon_id = 0;
-	ret->items = g_new0(struct stk_menu_item, g_slist_length(items) + 1);
+	memcpy(&ret->icon, icon, sizeof(ret->icon));
+	ret->items = g_new0(struct stk_menu_item, len + 1);
 	ret->default_item = -1;
 	ret->soft_key = soft_key;
 	ret->has_help = has_help;
@@ -278,6 +292,9 @@ static struct stk_menu *stk_menu_create(const char *title,
 
 		ret->items[i].text = g_strdup(item->text);
 		ret->items[i].item_id = item->id;
+
+		if (item_icon_ids && item_icon_ids->len)
+			ret->items[i].icon_id = item_icon_ids->list[i];
 
 		if (item->id == default_id)
 			ret->default_item = i;
@@ -294,8 +311,10 @@ static struct stk_menu *stk_menu_create_from_set_up_menu(
 
 	return stk_menu_create(cmd->setup_menu.alpha_id,
 				&cmd->setup_menu.text_attr,
+				&cmd->setup_menu.icon_id,
 				cmd->setup_menu.items,
 				&cmd->setup_menu.item_text_attr_list,
+				&cmd->setup_menu.item_icon_id_list,
 				0, soft_key, has_help);
 }
 
@@ -307,8 +326,10 @@ static struct stk_menu *stk_menu_create_from_select_item(
 
 	return stk_menu_create(cmd->select_item.alpha_id,
 				&cmd->select_item.text_attr,
+				&cmd->select_item.icon_id,
 				cmd->select_item.items,
 				&cmd->select_item.item_text_attr_list,
+				&cmd->select_item.item_icon_id_list,
 				cmd->select_item.item_id, soft_key, has_help);
 }
 
@@ -345,6 +366,11 @@ static void emit_menu_changed(struct ofono_stk *stk)
 						"MainMenuTitle",
 						DBUS_TYPE_STRING, &menu->title);
 
+	ofono_dbus_signal_property_changed(conn, path,
+						OFONO_STK_INTERFACE,
+						"MainMenuIcon",
+						DBUS_TYPE_BYTE, &menu->icon.id);
+
 	signal = dbus_message_new_signal(path, OFONO_STK_INTERFACE,
 						"PropertyChanged");
 	if (!signal) {
@@ -363,25 +389,8 @@ static void emit_menu_changed(struct ofono_stk *stk)
 	g_dbus_send_message(conn, signal);
 }
 
-static void dict_append_menu(DBusMessageIter *dict, struct stk_menu *menu)
-{
-	DBusMessageIter entry;
-	const char *key = "MainMenu";
-
-	ofono_dbus_dict_append(dict, "MainMenuTitle",
-				DBUS_TYPE_STRING, &menu->title);
-
-	dbus_message_iter_open_container(dict, DBUS_TYPE_DICT_ENTRY,
-						NULL, &entry);
-
-	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
-
-	append_menu_items_variant(&entry, menu->items);
-
-	dbus_message_iter_close_container(dict, &entry);
-}
-
-static void stk_alpha_id_set(struct ofono_stk *stk, const char *text)
+static void stk_alpha_id_set(struct ofono_stk *stk, const char *text,
+		const struct stk_icon_id *icon)
 {
 	/* TODO */
 }
@@ -398,7 +407,10 @@ static DBusMessage *stk_get_properties(DBusConnection *conn,
 	DBusMessage *reply;
 	DBusMessageIter iter;
 	DBusMessageIter dict;
-	const char *idle_mode_text;
+	DBusMessageIter entry;
+	const char *key = "MainMenu";
+	const char *str;
+	unsigned char icon;
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -410,13 +422,26 @@ static DBusMessage *stk_get_properties(DBusConnection *conn,
 					OFONO_PROPERTIES_ARRAY_SIGNATURE,
 					&dict);
 
-	idle_mode_text = stk->idle_mode_text ? stk->idle_mode_text : "";
-	ofono_dbus_dict_append(&dict, "IdleModeText",
-				DBUS_TYPE_STRING, &idle_mode_text);
+	str = stk->idle_mode_text ? stk->idle_mode_text : "";
+	ofono_dbus_dict_append(&dict, "IdleModeText", DBUS_TYPE_STRING, &str);
 
-	if (stk->main_menu)
-		dict_append_menu(&dict, stk->main_menu);
+	icon = stk->idle_mode_icon.id;
+	ofono_dbus_dict_append(&dict, "IdleModeIcon", DBUS_TYPE_BYTE, &icon);
 
+	str = stk->main_menu ? stk->main_menu->title : "";
+	ofono_dbus_dict_append(&dict, "MainMenuTitle", DBUS_TYPE_STRING, &str);
+
+	icon = stk->main_menu ? stk->main_menu->icon.id : 0;
+	ofono_dbus_dict_append(&dict, "MainMenuIcon", DBUS_TYPE_BYTE, &icon);
+
+	dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY,
+						NULL, &entry);
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
+
+	append_menu_items_variant(&entry,
+				stk->main_menu ? stk->main_menu->items : NULL);
+
+	dbus_message_iter_close_container(&dict, &entry);
 	dbus_message_iter_close_container(&iter, &dict);
 
 	return reply;
@@ -660,18 +685,14 @@ static gboolean handle_command_more_time(const struct stk_command *cmd,
 
 static void send_sms_cancel(struct ofono_stk *stk)
 {
-	stk->sms_submit_req->cancelled = TRUE;
-
-	if (!stk->pending_cmd->send_sms.alpha_id ||
-			!stk->pending_cmd->send_sms.alpha_id[0])
-		return;
+	stk->extern_req->cancelled = TRUE;
 
 	stk_alpha_id_unset(stk);
 }
 
 static void send_sms_submit_cb(gboolean ok, void *data)
 {
-	struct sms_submit_req *req = data;
+	struct extern_req *req = data;
 	struct ofono_stk *stk = req->stk;
 	struct ofono_error failure = { .type = OFONO_ERROR_TYPE_FAILURE };
 	struct stk_response rsp;
@@ -684,9 +705,7 @@ static void send_sms_submit_cb(gboolean ok, void *data)
 		return;
 	}
 
-	if (stk->pending_cmd->send_sms.alpha_id &&
-			stk->pending_cmd->send_sms.alpha_id[0])
-		stk_alpha_id_unset(stk);
+	stk_alpha_id_unset(stk);
 
 	memset(&rsp, 0, sizeof(rsp));
 
@@ -695,6 +714,12 @@ static void send_sms_submit_cb(gboolean ok, void *data)
 
 	if (stk_respond(stk, &rsp, stk_command_cb))
 		stk_command_cb(&failure, stk);
+}
+
+static void extern_req_start(struct ofono_stk *stk)
+{
+	stk->extern_req = g_new0(struct extern_req, 1);
+	stk->extern_req->stk = stk;
 }
 
 static gboolean handle_command_send_sms(const struct stk_command *cmd,
@@ -715,23 +740,21 @@ static gboolean handle_command_send_sms(const struct stk_command *cmd,
 
 	sms = __ofono_atom_get_data(sms_atom);
 
-	stk->sms_submit_req = g_new0(struct sms_submit_req, 1);
-	stk->sms_submit_req->stk = stk;
+	extern_req_start(stk);
 
 	msg_list.data = (void *) &cmd->send_sms.gsm_sms;
 	msg_list.next = NULL;
 
 	if (__ofono_sms_txq_submit(sms, &msg_list, 0, NULL, send_sms_submit_cb,
-				stk->sms_submit_req, g_free) < 0) {
-		g_free(stk->sms_submit_req);
+				stk->extern_req, g_free) < 0) {
+		g_free(stk->extern_req);
 		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
 		return TRUE;
 	}
 
 	stk->cancel_cmd = send_sms_cancel;
 
-	if (cmd->send_sms.alpha_id && cmd->send_sms.alpha_id[0])
-		stk_alpha_id_set(stk, cmd->send_sms.alpha_id);
+	stk_alpha_id_set(stk, cmd->send_sms.alpha_id, &cmd->send_sms.icon_id);
 
 	return FALSE;
 }
@@ -757,6 +780,16 @@ static gboolean handle_command_set_idle_text(const struct stk_command *cmd,
 						"IdleModeText",
 						DBUS_TYPE_STRING,
 						&idle_mode_text);
+
+	if (stk->idle_mode_icon.id != cmd->setup_idle_mode_text.icon_id.id) {
+		memcpy(&stk->idle_mode_icon, &cmd->setup_idle_mode_text.icon_id,
+				sizeof(stk->idle_mode_icon));
+
+		ofono_dbus_signal_property_changed(conn, path,
+						OFONO_STK_INTERFACE,
+						"IdleModeIcon", DBUS_TYPE_BYTE,
+						&stk->idle_mode_icon.id);
+	}
 
 	return TRUE;
 }
@@ -1139,8 +1172,8 @@ static gboolean handle_command_display_text(const struct stk_command *cmd,
 	}
 
 	/* We most likely got an out of memory error, tell SIM to retry */
-	if (stk_agent_display_text(stk->current_agent, dt->text, 0, priority,
-					display_text_cb, stk,
+	if (stk_agent_display_text(stk->current_agent, dt->text, &dt->icon_id,
+					priority, display_text_cb, stk,
 					display_text_destroy, timeout) < 0) {
 		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
 		return TRUE;
@@ -1283,7 +1316,6 @@ static gboolean handle_command_get_inkey(const struct stk_command *cmd,
 	 * Note: immediate response and help parameter values are not
 	 * provided by current api.
 	 */
-	uint8_t icon_id = 0;
 	int err;
 
 	if (gi->duration.interval) {
@@ -1302,16 +1334,17 @@ static gboolean handle_command_get_inkey(const struct stk_command *cmd,
 
 	if (yesno)
 		err = stk_agent_request_confirmation(stk->current_agent,
-							gi->text, icon_id,
+							gi->text, &gi->icon_id,
 							request_confirmation_cb,
 							stk, NULL, timeout);
 	else if (alphabet)
 		err = stk_agent_request_key(stk->current_agent, gi->text,
-						icon_id, ucs2, request_key_cb,
-						stk, NULL, timeout);
+						&gi->icon_id, ucs2,
+						request_key_cb, stk, NULL,
+						timeout);
 	else
 		err = stk_agent_request_digit(stk->current_agent, gi->text,
-						icon_id, request_key_cb,
+						&gi->icon_id, request_key_cb,
 						stk, NULL, timeout);
 
 	if (err < 0) {
@@ -1377,19 +1410,18 @@ static gboolean handle_command_get_input(const struct stk_command *cmd,
 	gboolean alphabet = (qualifier & (1 << 0)) != 0;
 	gboolean ucs2 = (qualifier & (1 << 1)) != 0;
 	gboolean hidden = (qualifier & (1 << 2)) != 0;
-	uint8_t icon_id = 0;
 	int err;
 
 	if (alphabet)
 		err = stk_agent_request_input(stk->current_agent, gi->text,
-						icon_id, gi->default_text, ucs2,
-						gi->resp_len.min,
+						&gi->icon_id, gi->default_text,
+						ucs2, gi->resp_len.min,
 						gi->resp_len.max, hidden,
 						request_string_cb,
 						stk, NULL, timeout);
 	else
 		err = stk_agent_request_digits(stk->current_agent, gi->text,
-						icon_id, gi->default_text,
+						&gi->icon_id, gi->default_text,
 						gi->resp_len.min,
 						gi->resp_len.max, hidden,
 						request_string_cb,
@@ -1496,7 +1528,8 @@ static void confirm_call_cb(enum stk_agent_result result, gboolean confirm,
 	}
 
 	err = __ofono_voicecall_dial(vc, sc->addr.number, sc->addr.ton_npi,
-					sc->alpha_id_call_setup, 0,
+					sc->alpha_id_call_setup,
+					sc->icon_id_call_setup.id,
 					qualifier >> 1, call_setup_connected,
 					stk);
 	if (err >= 0) {
@@ -1577,8 +1610,8 @@ static gboolean handle_command_set_up_call(const struct stk_command *cmd,
 	}
 
 	err = stk_agent_confirm_call(stk->current_agent, sc->alpha_id_usr_cfm,
-					0, confirm_call_cb, stk, NULL,
-					stk->timeout * 1000);
+					&sc->icon_id_usr_cfm, confirm_call_cb,
+					stk, NULL, stk->timeout * 1000);
 
 	if (err < 0) {
 		/*
@@ -1609,9 +1642,7 @@ static void send_ussd_cancel(struct ofono_stk *stk)
 	if (ussd)
 		__ofono_ussd_initiate_cancel(ussd);
 
-	if (stk->pending_cmd->send_ussd.alpha_id &&
-			stk->pending_cmd->send_ussd.alpha_id[0])
-		stk_alpha_id_unset(stk);
+	stk_alpha_id_unset(stk);
 }
 
 static void send_ussd_callback(int error, int dcs, const unsigned char *msg,
@@ -1623,9 +1654,7 @@ static void send_ussd_callback(int error, int dcs, const unsigned char *msg,
 	enum sms_charset charset;
 	unsigned char no_cause[] = { 0x00 };
 
-	if (stk->pending_cmd->send_ussd.alpha_id &&
-			stk->pending_cmd->send_ussd.alpha_id[0])
-		stk_alpha_id_unset(stk);
+	stk_alpha_id_unset(stk);
 
 	memset(&rsp, 0, sizeof(rsp));
 
@@ -1757,8 +1786,7 @@ static gboolean handle_command_send_ussd(const struct stk_command *cmd,
 		return TRUE;
 	}
 
-	if (cmd->send_ussd.alpha_id && cmd->send_ussd.alpha_id[0])
-		stk_alpha_id_set(stk, cmd->send_ussd.alpha_id);
+	stk_alpha_id_set(stk, cmd->send_ussd.alpha_id, &cmd->send_ussd.icon_id);
 
 	return FALSE;
 }
@@ -2007,6 +2035,46 @@ void ofono_stk_proactive_command_notify(struct ofono_stk *stk,
 	err = stk_respond(stk, &rsp, stk_command_cb);
 	if (err)
 		stk_command_cb(&error, stk);
+}
+
+void ofono_stk_proactive_command_handled_notify(struct ofono_stk *stk,
+						int length,
+						const unsigned char *pdu)
+{
+	struct stk_command *cmd;
+
+	stk_proactive_command_cancel(stk);
+
+	cmd = stk_command_new_from_pdu(pdu, length);
+
+	if (!cmd || cmd->status != STK_PARSE_RESULT_OK) {
+		ofono_error("Can't parse proactive command");
+
+		if (cmd)
+			stk_command_free(cmd);
+		return;
+	}
+
+	DBG("type: %d", cmd->type);
+
+	switch (cmd->type) {
+	case STK_COMMAND_TYPE_MORE_TIME:
+		break;
+
+	case STK_COMMAND_TYPE_SEND_SMS:
+		stk_alpha_id_set(stk, cmd->send_sms.alpha_id,
+					&cmd->send_sms.icon_id);
+		break;
+	}
+
+	stk_command_free(cmd);
+}
+
+void ofono_stk_terminal_response_sent_notify(struct ofono_stk *stk,
+						int length,
+						const unsigned char *pdu)
+{
+	stk_alpha_id_unset(stk);
 }
 
 int ofono_stk_driver_register(const struct ofono_stk_driver *d)

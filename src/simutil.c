@@ -69,6 +69,7 @@ static struct sim_ef_info ef_db[] = {
 {	0x2F05, ROOTMF, BINARY, 0,	ALW,	PIN	},
 {	0x2F06, ROOTMF, RECORD, 0,	ALW,	PIN	},
 {	0x2FE2, ROOTMF, BINARY, 10,	ALW,	NEV 	},
+{	0x4F20, 0x5F50, BINARY, 0,	PIN,	ADM	},
 {	0x6F05, 0x7F20, BINARY, 0,	ALW,	PIN	},
 {	0x6F06, 0x0000, RECORD, 0,	ALW,	ADM	},
 {	0x6F2C, 0x7F20, BINARY, 16,	PIN,	PIN	},
@@ -1405,7 +1406,8 @@ gboolean sim_parse_3g_get_response(const unsigned char *data, int len,
 
 gboolean sim_parse_2g_get_response(const unsigned char *response, int len,
 					int *file_len, int *record_len,
-					int *structure, unsigned char *access)
+					int *structure, unsigned char *access,
+					unsigned char *file_status)
 {
 	if (len < 14 || response[6] != 0x04)
 		return FALSE;
@@ -1419,6 +1421,8 @@ gboolean sim_parse_2g_get_response(const unsigned char *response, int len,
 	access[0] = response[8];
 	access[1] = response[9];
 	access[2] = response[10];
+
+	*file_status = response[11];
 
 	if (response[13] == 0x01 || response[13] == 0x03)
 		*record_len = response[14];

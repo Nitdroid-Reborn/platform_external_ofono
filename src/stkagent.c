@@ -34,6 +34,8 @@
 #include "ofono.h"
 
 #include "common.h"
+#include "smsutil.h"
+#include "stkutil.h"
 #include "stkagent.h"
 
 enum allowed_error {
@@ -238,7 +240,7 @@ static void append_menu_items(DBusMessageIter *iter,
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
 						"(sy)", &array);
 
-	for (; item->text; item++) {
+	while (item && item->text) {
 		dbus_message_iter_open_container(&array, DBUS_TYPE_STRUCT,
 							NULL, &entry);
 
@@ -248,6 +250,7 @@ static void append_menu_items(DBusMessageIter *iter,
 						&item->icon_id);
 
 		dbus_message_iter_close_container(&array, &entry);
+		item++;
 	}
 
 	dbus_message_iter_close_container(iter, &array);
@@ -343,7 +346,7 @@ int stk_agent_request_selection(struct stk_agent *agent,
 	dbus_message_iter_init_append(agent->msg, &iter);
 
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &menu->title);
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_BYTE, &menu->icon_id);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_BYTE, &menu->icon.id);
 	append_menu_items(&iter, menu->items);
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_INT16, &default_item);
 
@@ -396,7 +399,8 @@ static void display_text_cb(DBusPendingCall *call, void *data)
 }
 
 int stk_agent_display_text(struct stk_agent *agent, const char *text,
-				uint8_t icon_id, ofono_bool_t urgent,
+				const struct stk_icon_id *icon,
+				ofono_bool_t urgent,
 				stk_agent_display_text_cb cb,
 				void *user_data, ofono_destroy_func destroy,
 				int timeout)
@@ -412,7 +416,7 @@ int stk_agent_display_text(struct stk_agent *agent, const char *text,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_BOOLEAN, &priority,
 					DBUS_TYPE_INVALID);
 
@@ -465,8 +469,8 @@ static void get_confirmation_cb(DBusPendingCall *call, void *data)
 	CALLBACK_END();
 }
 
-int stk_agent_request_confirmation(struct stk_agent *agent,
-					const char *text, uint8_t icon_id,
+int stk_agent_request_confirmation(struct stk_agent *agent, const char *text,
+					const struct stk_icon_id *icon,
 					stk_agent_confirmation_cb cb,
 					void *user_data,
 					ofono_destroy_func destroy,
@@ -482,7 +486,7 @@ int stk_agent_request_confirmation(struct stk_agent *agent,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_INVALID);
 
 	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
@@ -536,8 +540,8 @@ static void get_digit_cb(DBusPendingCall *call, void *data)
 	CALLBACK_END();
 }
 
-int stk_agent_request_digit(struct stk_agent *agent,
-				const char *text, uint8_t icon_id,
+int stk_agent_request_digit(struct stk_agent *agent, const char *text,
+				const struct stk_icon_id *icon,
 				stk_agent_string_cb cb, void *user_data,
 				ofono_destroy_func destroy, int timeout)
 {
@@ -551,7 +555,7 @@ int stk_agent_request_digit(struct stk_agent *agent,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_INVALID);
 
 	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
@@ -604,7 +608,8 @@ static void get_key_cb(DBusPendingCall *call, void *data)
 }
 
 int stk_agent_request_key(struct stk_agent *agent, const char *text,
-				uint8_t icon_id, ofono_bool_t unicode_charset,
+				const struct stk_icon_id *icon,
+				ofono_bool_t unicode_charset,
 				stk_agent_string_cb cb, void *user_data,
 				ofono_destroy_func destroy, int timeout)
 {
@@ -618,7 +623,7 @@ int stk_agent_request_key(struct stk_agent *agent, const char *text,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_INVALID);
 
 	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
@@ -670,7 +675,8 @@ static void get_digits_cb(DBusPendingCall *call, void *data)
 }
 
 int stk_agent_request_digits(struct stk_agent *agent, const char *text,
-				uint8_t icon_id, const char *default_text,
+				const struct stk_icon_id *icon,
+				const char *default_text,
 				int min, int max, ofono_bool_t hidden,
 				stk_agent_string_cb cb, void *user_data,
 				ofono_destroy_func destroy, int timeout)
@@ -691,7 +697,7 @@ int stk_agent_request_digits(struct stk_agent *agent, const char *text,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_STRING, &default_text,
 					DBUS_TYPE_BYTE, &min_val,
 					DBUS_TYPE_BYTE, &max_val,
@@ -747,7 +753,8 @@ static void get_input_cb(DBusPendingCall *call, void *data)
 }
 
 int stk_agent_request_input(struct stk_agent *agent, const char *text,
-				uint8_t icon_id, const char *default_text,
+				const struct stk_icon_id *icon,
+				const char *default_text,
 				ofono_bool_t unicode_charset, int min, int max,
 				ofono_bool_t hidden, stk_agent_string_cb cb,
 				void *user_data, ofono_destroy_func destroy,
@@ -769,7 +776,7 @@ int stk_agent_request_input(struct stk_agent *agent, const char *text,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_STRING, &default_text,
 					DBUS_TYPE_BYTE, &min_val,
 					DBUS_TYPE_BYTE, &max_val,
@@ -824,7 +831,8 @@ static void confirm_call_cb(DBusPendingCall *call, void *data)
 }
 
 int stk_agent_confirm_call(struct stk_agent *agent, const char *text,
-				uint8_t icon_id, stk_agent_confirmation_cb cb,
+				const struct stk_icon_id *icon,
+				stk_agent_confirmation_cb cb,
 				void *user_data, ofono_destroy_func destroy,
 				int timeout)
 {
@@ -838,7 +846,7 @@ int stk_agent_confirm_call(struct stk_agent *agent, const char *text,
 
 	dbus_message_append_args(agent->msg,
 					DBUS_TYPE_STRING, &text,
-					DBUS_TYPE_BYTE, &icon_id,
+					DBUS_TYPE_BYTE, &icon->id,
 					DBUS_TYPE_INVALID);
 
 	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
@@ -851,6 +859,100 @@ int stk_agent_confirm_call(struct stk_agent *agent, const char *text,
 	agent->user_destroy = destroy;
 
 	dbus_pending_call_set_notify(agent->call, confirm_call_cb, agent, NULL);
+
+	return 0;
+}
+
+static void play_tone_cb(DBusPendingCall *call, void *data)
+{
+	struct stk_agent *agent = data;
+	stk_agent_tone_cb cb = agent->user_cb;
+	DBusMessage *reply = dbus_pending_call_steal_reply(call);
+	enum stk_agent_result result;
+	gboolean remove_agent;
+
+	if (check_error(agent, reply,
+			ALLOWED_ERROR_TERMINATE, &result) == -EINVAL) {
+		remove_agent = TRUE;
+		goto error;
+	}
+
+	if (dbus_message_get_args(reply, NULL, DBUS_TYPE_INVALID) == FALSE) {
+		ofono_error("Can't parse the reply to PlayTone()");
+		remove_agent = TRUE;
+		goto error;
+	}
+
+	cb(result, agent->user_data);
+	goto done;
+
+	CALLBACK_END();
+}
+
+int stk_agent_play_tone(struct stk_agent *agent, const char *text,
+			const struct stk_icon_id *icon, ofono_bool_t vibrate,
+			const char *tone, stk_agent_tone_cb cb, void *user_data,
+			ofono_destroy_func destroy, int timeout)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+
+	agent->msg = dbus_message_new_method_call(agent->bus, agent->path,
+							OFONO_SIM_APP_INTERFACE,
+							"PlayTone");
+	if (agent->msg == NULL)
+		return -ENOMEM;
+
+	dbus_message_append_args(agent->msg,
+					DBUS_TYPE_STRING, &tone,
+					DBUS_TYPE_STRING, &text,
+					DBUS_TYPE_BYTE, &icon->id,
+					DBUS_TYPE_INVALID);
+
+	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
+						timeout) == FALSE ||
+			agent->call == NULL)
+		return -EIO;
+
+	agent->user_cb = cb;
+	agent->user_data = user_data;
+	agent->user_destroy = destroy;
+
+	dbus_pending_call_set_notify(agent->call, play_tone_cb,
+					agent, NULL);
+
+	return 0;
+}
+
+int stk_agent_loop_tone(struct stk_agent *agent, const char *text,
+			const struct stk_icon_id *icon, ofono_bool_t vibrate,
+			const char *tone, stk_agent_tone_cb cb, void *user_data,
+			ofono_destroy_func destroy, int timeout)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+
+	agent->msg = dbus_message_new_method_call(agent->bus, agent->path,
+							OFONO_SIM_APP_INTERFACE,
+							"LoopTone");
+	if (agent->msg == NULL)
+		return -ENOMEM;
+
+	dbus_message_append_args(agent->msg,
+					DBUS_TYPE_STRING, &tone,
+					DBUS_TYPE_STRING, &text,
+					DBUS_TYPE_BYTE, &icon->id,
+					DBUS_TYPE_INVALID);
+
+	if (dbus_connection_send_with_reply(conn, agent->msg, &agent->call,
+						timeout) == FALSE ||
+			agent->call == NULL)
+		return -EIO;
+
+	agent->user_cb = cb;
+	agent->user_data = user_data;
+	agent->user_destroy = destroy;
+
+	dbus_pending_call_set_notify(agent->call, play_tone_cb,
+					agent, NULL);
 
 	return 0;
 }

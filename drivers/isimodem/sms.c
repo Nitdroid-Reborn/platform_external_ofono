@@ -1,21 +1,21 @@
 /*
- * This file is part of oFono - Open Source Telephony
  *
- * Copyright (C) 2009-2010 Nokia Corporation and/or its subsidiary(-ies).
+ *  oFono - Open Source Telephony
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
+ *  Copyright (C) 2009-2010 Nokia Corporation and/or its subsidiary(-ies).
  *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -167,7 +167,7 @@ static void isi_sca_set(struct ofono_sms *sms,
 		0xFD,	/* Params present, only SCA */
 	};
 
-	uint8_t filler[40];
+	uint8_t filler[40] = { 0 };
 	uint8_t bcd[12];
 
 	struct iovec iov[4] = {
@@ -182,7 +182,7 @@ static void isi_sca_set(struct ofono_sms *sms,
 
 	encode_bcd_number(sca->number, bcd + 2);
 	bcd[0] = 1 + (strlen(sca->number) + 1) / 2;
-	bcd[1] = sca->type;
+	bcd[1] = sca->type & 0x0f;
 
 	if (g_isi_request_vmake(sd->sim, iov, 4, SIM_TIMEOUT,
 				sca_set_resp_cb, cbd))

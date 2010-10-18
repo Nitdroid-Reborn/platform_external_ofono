@@ -55,38 +55,34 @@ static struct ofono_modem *find_modem(const char *devpath)
 	return NULL;
 }
 
-static const char *get_driver(struct udev_device *udev_device)
+static const char *get_property(struct udev_device *device,
+				char const *property_name)
 {
 	struct udev_list_entry *entry;
-	const char *driver = NULL;
 
-	entry = udev_device_get_properties_list_entry(udev_device);
+	entry = udev_device_get_properties_list_entry(device);
 	while (entry) {
 		const char *name = udev_list_entry_get_name(entry);
 
-		if (g_strcmp0(name, "OFONO_DRIVER") == 0)
-			driver = udev_list_entry_get_value(entry);
+		if (g_strcmp0(name, property_name) == 0)
+			return udev_list_entry_get_value(entry);
 
 		entry = udev_list_entry_get_next(entry);
 	}
 
-	return driver;
+	return NULL;
+}
+
+static const char *get_driver(struct udev_device *udev_device)
+{
+	return get_property(udev_device, "OFONO_DRIVER");
 }
 
 static const char *get_serial(struct udev_device *udev_device)
 {
-	struct udev_list_entry *entry;
-	const char *serial = NULL;
+	const char *serial;
 
-	entry = udev_device_get_properties_list_entry(udev_device);
-	while (entry) {
-		const char *name = udev_list_entry_get_name(entry);
-
-		if (g_strcmp0(name, "ID_SERIAL_SHORT") == 0)
-			serial = udev_list_entry_get_value(entry);
-
-		entry = udev_list_entry_get_next(entry);
-	}
+	serial = get_property(udev_device, "ID_SERIAL_SHORT");
 
 	if (serial != NULL) {
 		unsigned int i, len = strlen(serial);
@@ -147,8 +143,7 @@ static void add_mbm(struct ofono_modem *modem,
 			g_str_has_suffix(desc, "Mini-Card Network Adapter") ||
 			g_str_has_suffix(desc, "Broadband Network Adapter") ||
 			g_str_has_suffix(desc, "Minicard NetworkAdapter")) {
-		devnode = udev_device_get_property_value(udev_device,
-								"INTERFACE");
+		devnode = get_property(udev_device, "INTERFACE");
 		ofono_modem_set_string(modem, NETWORK_INTERFACE, devnode);
 	} else {
 		return;
@@ -194,8 +189,7 @@ static void add_hso(struct ofono_modem *modem,
 		else if (g_str_has_suffix(type, "Control") == TRUE)
 			ofono_modem_set_string(modem, CONTROL_PORT, devnode);
 	} else if (g_str_equal(subsystem, "net") == TRUE) {
-		devnode = udev_device_get_property_value(udev_device,
-								"INTERFACE");
+		devnode = get_property(udev_device, "INTERFACE");
 		ofono_modem_set_string(modem, NETWORK_INTERFACE, devnode);
 	} else {
 		return;
@@ -429,18 +423,28 @@ static void add_nokia(struct ofono_modem *modem,
 static void add_isi(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
-	const char *ifname, *addr;
+	const char *ifname, *type, *addr;
 
 	DBG("modem %p", modem);
+
+	if (ofono_modem_get_string(modem, "Interface"))
+		return;
+
+	addr = get_property(udev_device, "OFONO_ISI_ADDRESS");
+	if (addr != NULL)
+		ofono_modem_set_integer(modem, "Address", atoi(addr));
+
+	if (g_strcmp0(udev_device_get_subsystem(udev_device), "net") != 0)
+		return;
+
+	type = udev_device_get_sysattr_value(udev_device, "type");
+	if (g_strcmp0(type, "820") != 0)
+		return;
 
 	ifname = udev_device_get_sysname(udev_device);
 	ofono_modem_set_string(modem, "Interface", ifname);
 
 	DBG("interface %s", ifname);
-
-	addr = udev_device_get_property_value(udev_device, "OFONO_ISI_ADDRESS");
-	if (addr != NULL)
-		ofono_modem_set_integer(modem, "Address", atoi(addr));
 
 	ofono_modem_register(modem);
 }

@@ -32,6 +32,7 @@ enum sim_fileid {
 	SIM_EFMSISDN_FILEID = 0x6f40,
 	SIM_EFSPN_FILEID = 0x6f46,
 	SIM_EFSDN_FILEID = 0x6f49,
+	SIM_EFADN_FILEID = 0x6f3a,
 	SIM_EFEST_FILEID = 0x6f56,
 	SIM_EFAD_FILEID = 0x6fad,
 	SIM_EFPHASE_FILEID = 0x6fae,
@@ -55,6 +56,12 @@ enum sim_file_access {
 	SIM_FILE_ACCESS_RESERVED = 3,
 	SIM_FILE_ACCESS_ADM = 4,
 	SIM_FILE_ACCESS_NEVER = 15,
+};
+
+/* 51.011 Section 9.3 */
+enum sim_file_status {
+	SIM_FILE_STATUS_VALID			= 0x01,
+	SIM_FILE_STATUS_RW_WHEN_INVALID		= 0x04,
 };
 
 /* 131.102 Section 4.2.8 */
@@ -425,7 +432,8 @@ gboolean sim_parse_3g_get_response(const unsigned char *data, int len,
 
 gboolean sim_parse_2g_get_response(const unsigned char *response, int len,
 					int *file_len, int *record_len,
-					int *structure, unsigned char *access);
+					int *structure, unsigned char *access,
+					unsigned char *file_status);
 
 gboolean sim_ust_is_available(unsigned char *service_ust, unsigned char len,
 						enum sim_ust_service index);

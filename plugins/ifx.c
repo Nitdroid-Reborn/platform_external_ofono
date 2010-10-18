@@ -264,6 +264,10 @@ static void xgendata_query(gboolean ok, GAtResult *result, gpointer user_data)
 		data->audio_context = 0;
 	}
 
+	/* disable UART for power saving */
+	g_at_chat_send(data->dlcs[AUX_DLC], "AT+XPOW=0,0,0", none_prefix,
+							NULL, NULL, NULL);
+
 	if (data->audio_setting && data->audio_source && data->audio_dest) {
 		char buf[64];
 
@@ -397,7 +401,7 @@ static void setup_internal_mux(struct ofono_modem *modem)
 	if (!data->mux)
 		goto error;
 
-	if (getenv("OFONO_AT_DEBUG"))
+	if (getenv("OFONO_MUX_DEBUG"))
 		g_at_mux_set_debug(data->mux, ifx_debug, "MUX: ");
 
 	g_at_mux_start(data->mux);

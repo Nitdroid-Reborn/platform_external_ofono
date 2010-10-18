@@ -202,7 +202,6 @@ GPRS
 
   Priority: High
   Complexity: C2
-  Owner: Zhenhua Zhang <zhenhua.zhang@intel.com>
 
 - On-demand SOCKS5 proxy support for MMS contexts.  When an MMS context type
   is created, oFono should create a SOCKS5 proxy.  When a client connects to
@@ -284,6 +283,12 @@ Voicecall
   Priority: Medium
   Complexity: C1
   Owner: Pekka Pessi <pekka.pessi@nokia.com>
+
+- Long phone numbers. According to 3GPP TS 24.008, the callee address
+  can be up to 80 digits long.
+
+  Priority: Medium
+  Complexity: C2
 
 - Dial strings. Include CLIR prefixes and 2nd stage dial strings in the
   DialString call property. Add dialstring accessor method to C API.
@@ -389,22 +394,6 @@ Sim Toolkit
 
   Priority: High
   Complexity: C2
-
-- Support SIM icon files as defined in 3GPP 31.102.  The icons should be
-  automatically read from the SIM, converted to a usable format (such as XPM)
-  and cached inside the daemon.  This will require to read the contents of
-  EFimg and subsequently request the icon files.
-
-  Priority: High
-  Complexity: C8
-  Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
-
-- Provide access to SIM icons for UI applications.  This should be exposed via
-  the GetIcon method on the SimToolkit interface.
-
-  Priority: High
-  Complexity: C2
-  Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
 
 - Support Language Notification proactive command.
 

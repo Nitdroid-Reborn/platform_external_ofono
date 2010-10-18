@@ -47,6 +47,8 @@
 #define SIM_CACHE_PATH SIM_CACHE_BASEPATH "/%04x"
 #define SIM_CACHE_HEADER_SIZE 38
 #define SIM_FILE_INFO_SIZE 6
+#define SIM_IMAGE_CACHE_BASEPATH STORAGEDIR "/%s-%i/images"
+#define SIM_IMAGE_CACHE_PATH SIM_IMAGE_CACHE_BASEPATH "/%d.xpm"
 
 #define SIM_FS_VERSION 1
 
@@ -56,6 +58,7 @@ static gboolean sim_fs_op_read_block(gpointer user_data);
 
 struct sim_fs_op {
 	int id;
+	unsigned char *buffer;
 	enum ofono_sim_file_structure structure;
 	unsigned short offset;
 	int num_bytes;
@@ -69,6 +72,7 @@ struct sim_fs_op {
 
 static void sim_fs_op_free(struct sim_fs_op *node)
 {
+	g_free(node->buffer);
 	g_free(node);
 }
 
@@ -77,7 +81,6 @@ struct sim_fs {
 	gint op_source;
 	unsigned char bitmap[32];
 	int fd;
-	unsigned char *buffer;
 	struct ofono_sim *sim;
 	const struct ofono_sim_driver *driver;
 };
@@ -128,9 +131,6 @@ static void sim_fs_end_current(struct sim_fs *fs)
 		TFR(close(fs->fd));
 		fs->fd = -1;
 	}
-
-	g_free(fs->buffer);
-	fs->buffer = NULL;
 
 	memset(fs->bitmap, 0, sizeof(fs->bitmap));
 
@@ -228,15 +228,19 @@ static void sim_fs_op_read_block_cb(const struct ofono_error *error,
 	if (op->current == start_block) {
 		bufoff = 0;
 		dataoff = op->offset % 256;
-		tocopy = MIN(256 - op->offset % 256, len);
+		tocopy = MIN(256 - op->offset % 256,
+				op->num_bytes - op->current * 256);
 	} else {
 		bufoff = (op->current - start_block - 1) * 256 +
 				op->offset % 256;
 		dataoff = 0;
-		tocopy = len;
+		tocopy = MIN(256, op->num_bytes - op->current * 256);
 	}
 
-	memcpy(fs->buffer + bufoff, data + dataoff, tocopy);
+	DBG("bufoff: %d, dataoff: %d, tocopy: %d",
+				bufoff, dataoff, tocopy);
+
+	memcpy(op->buffer + bufoff, data + dataoff, tocopy);
 	cache_block(fs, op->current, 256, data, len);
 
 	op->current++;
@@ -244,7 +248,7 @@ static void sim_fs_op_read_block_cb(const struct ofono_error *error,
 	if (op->current > end_block) {
 		ofono_sim_file_read_cb_t cb = op->cb;
 
-		cb(1, op->num_bytes, 0, fs->buffer,
+		cb(1, op->num_bytes, 0, op->buffer,
 				op->record_length, op->userdata);
 
 		sim_fs_end_current(fs);
@@ -265,9 +269,9 @@ static gboolean sim_fs_op_read_block(gpointer user_data)
 	end_block = (op->offset + (op->num_bytes - 1)) / 256;
 
 	if (op->current == start_block) {
-		fs->buffer = g_try_new0(unsigned char, op->num_bytes);
+		op->buffer = g_try_new0(unsigned char, op->num_bytes);
 
-		if (fs->buffer == NULL) {
+		if (op->buffer == NULL) {
 			sim_fs_op_error(fs);
 			return FALSE;
 		}
@@ -288,18 +292,21 @@ static gboolean sim_fs_op_read_block(gpointer user_data)
 			seekoff = SIM_CACHE_HEADER_SIZE + op->current * 256 +
 				op->offset % 256;
 			toread = MIN(256 - op->offset % 256,
-					op->length - op->current * 256);
+					op->num_bytes - op->current * 256);
 		} else {
 			bufoff = (op->current - start_block - 1) * 256 +
 					op->offset % 256;
 			seekoff = SIM_CACHE_HEADER_SIZE + op->current * 256;
-			toread = MIN(256, op->length - op->current * 256);
+			toread = MIN(256, op->num_bytes - op->current * 256);
 		}
+
+		DBG("bufoff: %d, seekoff: %d, toread: %d",
+				bufoff, seekoff, toread);
 
 		if (lseek(fs->fd, seekoff, SEEK_SET) == (off_t) -1)
 			break;
 
-		if (TFR(read(fs->fd, fs->buffer + bufoff, toread)) != toread)
+		if (TFR(read(fs->fd, op->buffer + bufoff, toread)) != toread)
 			break;
 
 		op->current += 1;
@@ -308,7 +315,7 @@ static gboolean sim_fs_op_read_block(gpointer user_data)
 	if (op->current > end_block) {
 		ofono_sim_file_read_cb_t cb = op->cb;
 
-		cb(1, op->num_bytes, 0, fs->buffer,
+		cb(1, op->num_bytes, 0, op->buffer,
 				op->record_length, op->userdata);
 
 		sim_fs_end_current(fs);
@@ -426,7 +433,9 @@ static gboolean sim_fs_op_read_record(gpointer user)
 static void sim_fs_op_info_cb(const struct ofono_error *error, int length,
 				enum ofono_sim_file_structure structure,
 				int record_length,
-				const unsigned char access[3], void *data)
+				const unsigned char access[3],
+				unsigned char file_status,
+				void *data)
 {
 	struct sim_fs *fs = data;
 	struct sim_fs_op *op = g_queue_peek_head(fs->op_q);
@@ -608,17 +617,17 @@ static gboolean sim_fs_op_next(gpointer user_data)
 		switch (op->structure) {
 		case OFONO_SIM_FILE_STRUCTURE_TRANSPARENT:
 			driver->write_file_transparent(fs->sim, op->id, 0,
-					op->length, fs->buffer,
+					op->length, op->buffer,
 					sim_fs_op_write_cb, fs);
 			break;
 		case OFONO_SIM_FILE_STRUCTURE_FIXED:
 			driver->write_file_linear(fs->sim, op->id, op->current,
-					op->length, fs->buffer,
+					op->length, op->buffer,
 					sim_fs_op_write_cb, fs);
 			break;
 		case OFONO_SIM_FILE_STRUCTURE_CYCLIC:
 			driver->write_file_cyclic(fs->sim, op->id,
-					op->length, fs->buffer,
+					op->length, op->buffer,
 					sim_fs_op_write_cb, fs);
 			break;
 		default:
@@ -626,8 +635,8 @@ static gboolean sim_fs_op_next(gpointer user_data)
 					"this can't happen");
 		}
 
-		g_free(fs->buffer);
-		fs->buffer = NULL;
+		g_free(op->buffer);
+		op->buffer = NULL;
 	}
 
 	return FALSE;
@@ -709,7 +718,7 @@ int sim_fs_write(struct sim_fs *fs, int id, ofono_sim_file_write_cb_t cb,
 	op->cb = cb;
 	op->userdata = userdata;
 	op->is_read = FALSE;
-	fs->buffer = g_memdup(data, length);
+	op->buffer = g_memdup(data, length);
 	op->structure = structure;
 	op->length = length;
 	op->current = record;
@@ -720,6 +729,71 @@ int sim_fs_write(struct sim_fs *fs, int id, ofono_sim_file_write_cb_t cb,
 		fs->op_source = g_idle_add(sim_fs_op_next, fs);
 
 	return 0;
+}
+
+void sim_fs_cache_image(struct sim_fs *fs, const char *image, int id)
+{
+	const char *imsi;
+	enum ofono_sim_phase phase;
+
+	if (fs == NULL || image == NULL)
+		return;
+
+	imsi = ofono_sim_get_imsi(fs->sim);
+	if (imsi == NULL)
+		return;
+
+	phase = ofono_sim_get_phase(fs->sim);
+	write_file((const unsigned char *) image, strlen(image),
+			SIM_CACHE_MODE, SIM_IMAGE_CACHE_PATH, imsi,
+			phase, id);
+}
+
+char *sim_fs_get_cached_image(struct sim_fs *fs, int id)
+{
+	const char *imsi;
+	enum ofono_sim_phase phase;
+	unsigned short image_length;
+	int fd;
+	char *buffer;
+	char *path;
+	int len;
+	struct stat st_buf;
+
+	if (fs == NULL)
+		return NULL;
+
+	imsi = ofono_sim_get_imsi(fs->sim);
+	if (imsi == NULL)
+		return NULL;
+
+	phase = ofono_sim_get_phase(fs->sim);
+	path = g_strdup_printf(SIM_IMAGE_CACHE_PATH, imsi, phase, id);
+
+	TFR(stat(path, &st_buf));
+	fd = TFR(open(path, O_RDONLY));
+	g_free(path);
+
+	if (fd < 0)
+		return NULL;
+
+	image_length = st_buf.st_size;
+	buffer = g_try_new0(char, image_length + 1);
+
+	if (buffer == NULL) {
+		TFR(close(fd));
+		return NULL;
+	}
+
+	len = TFR(read(fd, buffer, image_length));
+	TFR(close(fd));
+
+	if (len != image_length) {
+		g_free(buffer);
+		return NULL;
+	}
+
+	return buffer;
 }
 
 static void remove_cachefile(const char *imsi, enum ofono_sim_phase phase,
@@ -735,6 +809,23 @@ static void remove_cachefile(const char *imsi, enum ofono_sim_phase phase,
 		return;
 
 	path = g_strdup_printf(SIM_CACHE_PATH, imsi, phase, id);
+	remove(path);
+	g_free(path);
+}
+
+static void remove_imagefile(const char *imsi, enum ofono_sim_phase phase,
+				const struct dirent *file)
+{
+	int id;
+	char *path;
+
+	if (file->d_type != DT_REG)
+		return;
+
+	if (sscanf(file->d_name, "%d", &id) != 1)
+		return;
+
+	path = g_strdup_printf(SIM_IMAGE_CACHE_PATH, imsi, phase, id);
 	remove(path);
 	g_free(path);
 }
@@ -762,6 +853,20 @@ void sim_fs_check_version(struct sim_fs *fs)
 		/* Remove all file ids */
 		while (len--) {
 			remove_cachefile(imsi, phase, entries[len]);
+			g_free(entries[len]);
+		}
+
+		g_free(entries);
+	}
+
+	path = g_strdup_printf(SIM_IMAGE_CACHE_BASEPATH, imsi, phase);
+	len = scandir(path, &entries, NULL, alphasort);
+	g_free(path);
+
+	if (len > 0) {
+		/* Remove everything */
+		while (len--) {
+			remove_imagefile(imsi, phase, entries[len]);
 			g_free(entries[len]);
 		}
 

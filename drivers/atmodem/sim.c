@@ -41,11 +41,13 @@
 
 #include "atmodem.h"
 
+#define EF_STATUS_INVALIDATED 0
+#define EF_STATUS_VALID 1
+
 struct sim_data {
 	GAtChat *chat;
 	unsigned int vendor;
 	guint ready_id;
-	guint ready_source;
 };
 
 static const char *crsm_prefix[] = { "+CRSM:", NULL };
@@ -64,11 +66,12 @@ static void at_crsm_info_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	int flen, rlen;
 	int str;
 	unsigned char access[3];
+	unsigned char file_status;
 
 	decode_at_error(&error, g_at_result_final_response(result));
 
 	if (!ok) {
-		cb(&error, -1, -1, -1, NULL, cbd->data);
+		cb(&error, -1, -1, -1, NULL, EF_STATUS_INVALIDATED, cbd->data);
 		return;
 	}
 
@@ -88,27 +91,32 @@ static void at_crsm_info_cb(gboolean ok, GAtResult *result, gpointer user_data)
 		error.type = OFONO_ERROR_TYPE_SIM;
 		error.error = (sw1 << 8) | sw2;
 
-		cb(&error, -1, -1, -1, NULL, cbd->data);
+		cb(&error, -1, -1, -1, NULL, EF_STATUS_INVALIDATED, cbd->data);
 		return;
 	}
 
 	DBG("crsm_info_cb: %02x, %02x, %i", sw1, sw2, len);
 
-	if (response[0] == 0x62)
+	if (response[0] == 0x62) {
 		ok = sim_parse_3g_get_response(response, len, &flen, &rlen,
 						&str, access, NULL);
+
+		file_status = EF_STATUS_VALID;
+	}
 	else
 		ok = sim_parse_2g_get_response(response, len, &flen, &rlen,
-						&str, access);
+						&str, access, &file_status);
 
 	if (!ok)
 		goto error;
 
-	cb(&error, flen, str, rlen, access, cbd->data);
+	cb(&error, flen, str, rlen, access, file_status, cbd->data);
+
 	return;
 
 error:
-	CALLBACK_WITH_FAILURE(cb, -1, -1, -1, NULL, cbd->data);
+	CALLBACK_WITH_FAILURE(cb, -1, -1, -1, NULL,
+				EF_STATUS_INVALIDATED, cbd->data);
 }
 
 static void at_sim_read_info(struct ofono_sim *sim, int fileid,
@@ -123,7 +131,8 @@ static void at_sim_read_info(struct ofono_sim *sim, int fileid,
 		unsigned char access[3] = { 0x00, 0x00, 0x00 };
 
 		if (fileid == SIM_EFAD_FILEID) {
-			CALLBACK_WITH_SUCCESS(cb, 4, 0, 0, access, data);
+			CALLBACK_WITH_SUCCESS(cb, 4, 0, 0, access,
+						EF_STATUS_VALID, data);
 			return;
 		}
 	}
@@ -142,7 +151,8 @@ static void at_sim_read_info(struct ofono_sim *sim, int fileid,
 		return;
 
 error:
-	CALLBACK_WITH_FAILURE(cb, -1, -1, -1, NULL, data);
+	CALLBACK_WITH_FAILURE(cb, -1, -1, -1, NULL,
+				EF_STATUS_INVALIDATED, data);
 }
 
 static void at_crsm_read_cb(gboolean ok, GAtResult *result,
@@ -522,18 +532,6 @@ error:
 	CALLBACK_WITH_FAILURE(cb, -1, data);
 }
 
-static gboolean ready_notify_unregister(gpointer user_data)
-{
-	struct sim_data *sd = user_data;
-
-	sd->ready_source = 0;
-
-	g_at_chat_unregister(sd->chat, sd->ready_id);
-	sd->ready_id = 0;
-
-	return FALSE;
-}
-
 static void at_xsim_notify(GAtResult *result, gpointer user_data)
 {
 	struct cb_data *cbd = user_data;
@@ -542,9 +540,6 @@ static void at_xsim_notify(GAtResult *result, gpointer user_data)
 	struct ofono_error error = { .type = OFONO_ERROR_TYPE_NO_ERROR };
 	GAtResultIter iter;
 	int state;
-
-	if (sd->ready_source > 0)
-		return;
 
 	g_at_result_iter_init(&iter, result);
 
@@ -564,7 +559,8 @@ static void at_xsim_notify(GAtResult *result, gpointer user_data)
 
 	cb(&error, cbd->data);
 
-	sd->ready_source = g_timeout_add(0, ready_notify_unregister, sd);
+	g_at_chat_unregister(sd->chat, sd->ready_id);
+	sd->ready_id = 0;
 }
 
 static void at_epev_notify(GAtResult *result, gpointer user_data)
@@ -574,12 +570,10 @@ static void at_epev_notify(GAtResult *result, gpointer user_data)
 	ofono_sim_lock_unlock_cb_t cb = cbd->cb;
 	struct ofono_error error = { .type = OFONO_ERROR_TYPE_NO_ERROR };
 
-	if (sd->ready_source > 0)
-		return;
-
 	cb(&error, cbd->data);
 
-	sd->ready_source = g_timeout_add(0, ready_notify_unregister, sd);
+	g_at_chat_unregister(sd->chat, sd->ready_id);
+	sd->ready_id = 0;
 }
 
 static void at_pin_send_cb(gboolean ok, GAtResult *result,
@@ -624,18 +618,6 @@ done:
 	g_free(cbd);
 }
 
-static void at_lock_unlock_cb(gboolean ok, GAtResult *result,
-				gpointer user_data)
-{
-	struct cb_data *cbd = user_data;
-	ofono_sim_lock_unlock_cb_t cb = cbd->cb;
-	struct ofono_error error;
-
-	decode_at_error(&error, g_at_result_final_response(result));
-
-	cb(&error, cbd->data);
-}
-
 static void at_pin_send(struct ofono_sim *sim, const char *passwd,
 			ofono_sim_lock_unlock_cb_t cb, void *data)
 {
@@ -665,6 +647,38 @@ error:
 	CALLBACK_WITH_FAILURE(cb, data);
 }
 
+static void at_pin_send_puk_cb(gboolean ok, GAtResult *result,
+				gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	struct sim_data *sd = cbd->user;
+	ofono_sim_lock_unlock_cb_t cb = cbd->cb;
+	struct ofono_error error;
+
+	decode_at_error(&error, g_at_result_final_response(result));
+
+	if (!ok)
+		goto done;
+
+	switch (sd->vendor) {
+	case OFONO_VENDOR_IFX:
+		/*
+		 * On the IFX modem, AT+CPIN? can return READY too
+		 * early and so use +XSIM notification to detect
+		 * the ready state of the SIM.
+		 */
+		sd->ready_id = g_at_chat_register(sd->chat, "+XSIM",
+							at_xsim_notify,
+							FALSE, cbd, g_free);
+		return;
+	}
+
+done:
+	cb(&error, cbd->data);
+
+	g_free(cbd);
+}
+
 static void at_pin_send_puk(struct ofono_sim *sim, const char *puk,
 				const char *passwd,
 				ofono_sim_lock_unlock_cb_t cb, void *data)
@@ -677,10 +691,12 @@ static void at_pin_send_puk(struct ofono_sim *sim, const char *puk,
 	if (!cbd)
 		goto error;
 
+	cbd->user = sd;
+
 	snprintf(buf, sizeof(buf), "AT+CPIN=\"%s\",\"%s\"", puk, passwd);
 
 	ret = g_at_chat_send(sd->chat, buf, none_prefix,
-				at_lock_unlock_cb, cbd, g_free);
+				at_pin_send_puk_cb, cbd, NULL);
 
 	memset(buf, 0, sizeof(buf));
 
@@ -691,6 +707,18 @@ error:
 	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
+}
+
+static void at_lock_unlock_cb(gboolean ok, GAtResult *result,
+				gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	ofono_sim_lock_unlock_cb_t cb = cbd->cb;
+	struct ofono_error error;
+
+	decode_at_error(&error, g_at_result_final_response(result));
+
+	cb(&error, cbd->data);
 }
 
 static const char *const at_clck_cpwd_fac[] = {
@@ -872,9 +900,6 @@ static void at_sim_remove(struct ofono_sim *sim)
 	struct sim_data *sd = ofono_sim_get_data(sim);
 
 	ofono_sim_set_data(sim, NULL);
-
-	if (sd->ready_source > 0)
-		g_source_remove(sd->ready_source);
 
 	g_at_chat_unref(sd->chat);
 	g_free(sd);

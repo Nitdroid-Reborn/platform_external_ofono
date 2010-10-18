@@ -61,7 +61,11 @@ struct at_notify_node {
 	GAtNotifyFunc callback;
 	gpointer user_data;
 	GDestroyNotify notify;
+	gboolean destroyed;
 };
+
+typedef gboolean (*node_remove_func)(struct at_notify_node *node,
+					gpointer user_data);
 
 struct at_notify {
 	GSList *nodes;
@@ -93,6 +97,7 @@ struct at_chat {
 	GAtSyntax *syntax;
 	gboolean destroyed;			/* Re-entrancy guard */
 	gboolean in_read_handler;		/* Re-entrancy guard */
+	gboolean in_notify;
 	GSList *terminator_list;		/* Non-standard terminator */
 };
 
@@ -107,6 +112,11 @@ struct terminator_info {
 	int len;
 	gboolean success;
 };
+
+static gboolean node_is_destroyed(struct at_notify_node *node, gpointer user)
+{
+	return node->destroyed;
+}
 
 static gint at_notify_node_compare_by_id(gconstpointer a, gconstpointer b)
 {
@@ -152,6 +162,65 @@ static gint at_command_compare_by_id(gconstpointer a, gconstpointer b)
 		return 1;
 
 	return 0;
+}
+
+static gboolean at_chat_unregister_all(struct at_chat *chat,
+					gboolean mark_only,
+					node_remove_func func,
+					gpointer userdata)
+{
+	GHashTableIter iter;
+	struct at_notify *notify;
+	struct at_notify_node *node;
+	gpointer key, value;
+	GSList *p;
+	GSList *c;
+	GSList *t;
+
+	if (chat->notify_list == NULL)
+		return FALSE;
+
+	g_hash_table_iter_init(&iter, chat->notify_list);
+
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		notify = value;
+
+		p = NULL;
+		c = notify->nodes;
+
+		while (c) {
+			node = c->data;
+
+			if (func(node, userdata) != TRUE) {
+				p = c;
+				c = c->next;
+				continue;
+			}
+
+			if (mark_only) {
+				node->destroyed = TRUE;
+				p = c;
+				c = c->next;
+				continue;
+			}
+
+			if (p)
+				p->next = c->next;
+			else
+				notify->nodes = c->next;
+
+			at_notify_node_destroy(node, NULL);
+
+			t = c;
+			c = c->next;
+			g_slist_free_1(t);
+		}
+
+		if (notify->nodes == NULL)
+			g_hash_table_iter_remove(&iter);
+	}
+
+	return TRUE;
 }
 
 static struct at_command *at_command_create(guint gid, const char *cmd,
@@ -321,6 +390,8 @@ static gboolean at_chat_match_notify(struct at_chat *chat, char *line)
 	result.lines = 0;
 	result.final_or_pdu = 0;
 
+	chat->in_notify = TRUE;
+
 	while (g_hash_table_iter_next(&iter, &key, &value)) {
 		notify = value;
 
@@ -344,9 +415,13 @@ static gboolean at_chat_match_notify(struct at_chat *chat, char *line)
 		ret = TRUE;
 	}
 
+	chat->in_notify = FALSE;
+
 	if (ret) {
 		g_slist_free(result.lines);
 		g_free(line);
+
+		at_chat_unregister_all(chat, FALSE, node_is_destroyed, NULL);
 	}
 
 	return ret;
@@ -530,6 +605,9 @@ static void have_notify_pdu(struct at_chat *p, char *pdu, GAtResult *result)
 	struct at_notify *notify;
 	char *prefix;
 	gpointer key, value;
+	gboolean called = FALSE;
+
+	p->in_notify = TRUE;
 
 	g_hash_table_iter_init(&iter, p->notify_list);
 
@@ -544,7 +622,13 @@ static void have_notify_pdu(struct at_chat *p, char *pdu, GAtResult *result)
 			continue;
 
 		g_slist_foreach(notify->nodes, at_notify_call_callback, result);
+		called = TRUE;
 	}
+
+	p->in_notify = FALSE;
+
+	if (called)
+		at_chat_unregister_all(p, FALSE, node_is_destroyed, NULL);
 }
 
 static void have_pdu(struct at_chat *p, char *pdu)
@@ -1060,7 +1144,8 @@ static guint at_chat_register(struct at_chat *chat, guint group,
 	return node->id;
 }
 
-static gboolean at_chat_unregister(struct at_chat *chat, guint group, guint id)
+static gboolean at_chat_unregister(struct at_chat *chat, gboolean mark_only,
+					guint group, guint id)
 {
 	GHashTableIter iter;
 	struct at_notify *notify;
@@ -1085,7 +1170,12 @@ static gboolean at_chat_unregister(struct at_chat *chat, guint group, guint id)
 		node = l->data;
 
 		if (node->gid != group)
-			continue;
+			return FALSE;
+
+		if (mark_only) {
+			node->destroyed = TRUE;
+			return TRUE;
+		}
 
 		at_notify_node_destroy(node, NULL);
 		notify->nodes = g_slist_remove(notify->nodes, node);
@@ -1099,53 +1189,15 @@ static gboolean at_chat_unregister(struct at_chat *chat, guint group, guint id)
 	return FALSE;
 }
 
-static gboolean at_chat_unregister_group(struct at_chat *chat, guint group)
+static gboolean node_compare_by_group(struct at_notify_node *node,
+					gpointer userdata)
 {
-	GHashTableIter iter;
-	struct at_notify *notify;
-	struct at_notify_node *node;
-	gpointer key, value;
-	GSList *p;
-	GSList *c;
-	GSList *t;
+	guint group = GPOINTER_TO_UINT(userdata);
 
-	if (chat->notify_list == NULL)
-		return FALSE;
+	if (node->gid == group)
+		return TRUE;
 
-	g_hash_table_iter_init(&iter, chat->notify_list);
-
-	while (g_hash_table_iter_next(&iter, &key, &value)) {
-		notify = value;
-
-		p = NULL;
-		c = notify->nodes;
-
-		while (c) {
-			node = c->data;
-
-			if (node->gid != group) {
-				p = c;
-				c = c->next;
-				continue;
-			}
-
-			if (p)
-				p->next = c->next;
-			else
-				notify->nodes = c->next;
-
-			at_notify_node_destroy(node, NULL);
-
-			t = c;
-			c = c->next;
-			g_slist_free_1(t);
-		}
-
-		if (notify->nodes == NULL)
-			g_hash_table_iter_remove(&iter);
-	}
-
-	return TRUE;
+	return FALSE;
 }
 
 static struct at_chat *create_chat(GIOChannel *channel, GIOFlags flags,
@@ -1310,7 +1362,7 @@ void g_at_chat_unref(GAtChat *chat)
 		return;
 
 	at_chat_cancel_group(chat->parent, chat->group);
-	at_chat_unregister_group(chat->parent, chat->group);
+	g_at_chat_unregister_all(chat);
 	at_chat_unref(chat->parent);
 
 	g_free(chat);
@@ -1423,7 +1475,8 @@ gboolean g_at_chat_unregister(GAtChat *chat, guint id)
 	if (chat == NULL)
 		return FALSE;
 
-	return at_chat_unregister(chat->parent, chat->group, id);
+	return at_chat_unregister(chat->parent, chat->parent->in_notify,
+					chat->group, id);
 }
 
 gboolean g_at_chat_unregister_all(GAtChat *chat)
@@ -1431,5 +1484,8 @@ gboolean g_at_chat_unregister_all(GAtChat *chat)
 	if (chat == NULL)
 		return FALSE;
 
-	return at_chat_unregister_group(chat->parent, chat->group);
+	return at_chat_unregister_all(chat->parent,
+					chat->parent->in_notify,
+					node_compare_by_group,
+					GUINT_TO_POINTER(chat->group));
 }

@@ -406,7 +406,8 @@ test_scripts = test/backtrace \
 		test/lock-pin \
 		test/unlock-pin \
 		test/enable-gprs \
-		test/disable-gprs
+		test/disable-gprs \
+		test/get-icon
 
 if TEST
 testdir = $(pkglibdir)/test

@@ -22,11 +22,13 @@
 #ifndef __OFONO_VERSION_H
 #define __OFONO_VERSION_H
 
+#include "config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define OFONO_VERSION	"0.31"
+#define OFONO_VERSION	VERSION
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,8 @@
 /* config.h.  Generated from config.h.in by configure.  */
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+#include <version.h>
+
 /* Directory for the configuration files */
 #define CONFIGDIR "/system/etc"
 
@@ -47,24 +49,6 @@
 /* Define to 1 if your C compiler doesn't accept -c and -o together. */
 /* #undef NO_MINUS_C_MINUS_O */
 
-/* Name of package */
-#define PACKAGE "ofono"
-
-/* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT ""
-
-/* Define to the full name of this package. */
-#define PACKAGE_NAME "ofono"
-
-/* Define to the full name and version of this package. */
-#define PACKAGE_STRING "ofono 0.31"
-
-/* Define to the one symbol short name of this package. */
-#define PACKAGE_TARNAME "ofono"
-
-/* Define to the version of this package. */
-#define PACKAGE_VERSION "0.31"
-
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
 
@@ -74,7 +58,7 @@
 #define PLUGINDIR "/system/lib/"
 
 /* Version number of package */
-#define VERSION "0.31"
+#define VERSION "0.32"
 
 /* Decide if we're going to support IPv6 */
 /* IPv6 can be forced off with "make COPTS=-DNO_IPV6" */

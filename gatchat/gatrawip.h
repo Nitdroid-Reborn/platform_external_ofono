@@ -1,6 +1,6 @@
 /*
  *
- *  oFono - Open Source Telephony
+ *  AT chat library with GLib integration
  *
  *  Copyright (C) 2008-2010  Intel Corporation. All rights reserved.
  *
@@ -19,39 +19,36 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
+#ifndef __G_AT_RAWIP_H
+#define __G_AT_RAWIP_H
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#include <glib.h>
-#include <gatchat.h>
+#include "gat.h"
+#include "gatio.h"
 
-#define OFONO_API_SUBJECT_TO_CHANGE
-#include <ofono/plugin.h>
-#include <ofono/types.h>
+struct _GAtRawIP;
 
-#include "ifxmodem.h"
+typedef struct _GAtRawIP GAtRawIP;
 
-static int ifxmodem_init(void)
-{
-	ifx_voicecall_init();
-	ifx_audio_settings_init();
-	ifx_radio_settings_init();
-	ifx_gprs_context_init();
-	ifx_stk_init();
+GAtRawIP *g_at_rawip_new(GIOChannel *channel);
+GAtRawIP *g_at_rawip_new_from_io(GAtIO *io);
 
-	return 0;
+GAtRawIP *g_at_rawip_ref(GAtRawIP *rawip);
+void g_at_rawip_unref(GAtRawIP *rawip);
+
+void g_at_rawip_open(GAtRawIP *rawip);
+void g_at_rawip_shutdown(GAtRawIP *rawip);
+
+const char *g_at_rawip_get_interface(GAtRawIP *rawip);
+
+void g_at_rawip_set_debug(GAtRawIP *rawip, GAtDebugFunc func,
+						gpointer user_data);
+
+#ifdef __cplusplus
 }
+#endif
 
-static void ifxmodem_exit(void)
-{
-	ifx_stk_exit();
-	ifx_gprs_context_exit();
-	ifx_radio_settings_exit();
-	ifx_audio_settings_exit();
-	ifx_voicecall_exit();
-}
-
-OFONO_PLUGIN_DEFINE(ifxmodem, "Infineon modem driver", VERSION,
-			OFONO_PLUGIN_PRIORITY_DEFAULT,
-			ifxmodem_init, ifxmodem_exit)
+#endif /* __G_AT_RAWIP_H */

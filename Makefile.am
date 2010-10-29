@@ -71,6 +71,7 @@ gatchat_sources = gatchat/gatchat.h gatchat/gatchat.c \
 				gatchat/gatutil.h gatchat/gatutil.c \
 				gatchat/gat.h \
 				gatchat/gatserver.h gatchat/gatserver.c \
+				gatchat/gatrawip.h gatchat/gatrawip.c \
 				gatchat/gathdlc.c gatchat/gathdlc.h \
 				gatchat/gatppp.c gatchat/gatppp.h \
 				gatchat/ppp.h gatchat/ppp_cp.h \
@@ -222,6 +223,7 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/ifxmodem/voicecall.c \
 			drivers/ifxmodem/audio-settings.c \
 			drivers/ifxmodem/radio-settings.c \
+			drivers/ifxmodem/gprs-context.c \
 			drivers/ifxmodem/stk.c
 
 builtin_modules += stemodem

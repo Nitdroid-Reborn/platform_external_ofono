@@ -62,17 +62,19 @@
 #include <drivers/atmodem/atutil.h>
 #include <drivers/atmodem/vendor.h>
 
-#define NUM_DLC  4
+#define NUM_DLC  5
 
 #define VOICE_DLC   0
 #define NETREG_DLC  1
-#define GPRS_DLC    2
-#define AUX_DLC     3
+#define GPRS1_DLC   2
+#define GPRS2_DLC   3
+#define AUX_DLC     4
 
-static char *dlc_prefixes[NUM_DLC] = { "Voice: ", "Net: ", "GPRS: ", "Aux: " };
+static char *dlc_prefixes[NUM_DLC] = { "Voice: ", "Net: ",
+					"GPRS1: ", "GPRS2: ", "Aux: " };
 
 static const char *dlc_nodes[NUM_DLC] = { "/dev/ttyGSM1", "/dev/ttyGSM2",
-					"/dev/ttyGSM7", "/dev/ttyGSM8" };
+			"/dev/ttyGSM3", "/dev/ttyGSM4", "/dev/ttyGSM6" };
 
 static const char *none_prefix[] = { NULL };
 static const char *xdrv_prefix[] = { "+XDRV:", NULL };
@@ -83,6 +85,7 @@ struct ifx_data {
 	GAtChat *dlcs[NUM_DLC];
 	guint dlc_poll_count;
 	guint dlc_poll_source;
+	guint dlc_init_source;
 	guint frame_size;
 	int mux_ldisc;
 	int saved_ldisc;
@@ -198,9 +201,6 @@ static GAtChat *create_chat(GIOChannel *channel, char *debug)
 	if (getenv("OFONO_AT_DEBUG"))
 		g_at_chat_set_debug(chat, ifx_debug, debug);
 
-	g_at_chat_send(chat, "ATE0 +CMEE=1", NULL,
-					NULL, NULL, NULL);
-
 	return chat;
 }
 
@@ -209,6 +209,11 @@ static void shutdown_device(struct ifx_data *data)
 	int i, fd;
 
 	DBG("");
+
+	if (data->dlc_init_source > 0) {
+		g_source_remove(data->dlc_init_source);
+		data->dlc_init_source = 0;
+	}
 
 	for (i = 0; i < NUM_DLC; i++) {
 		if (!data->dlcs[i])
@@ -338,6 +343,29 @@ static void cfun_enable(gboolean ok, GAtResult *result, gpointer user_data)
 					xgendata_query, modem, NULL);
 }
 
+static gboolean dlc_setup(gpointer user_data)
+{
+	struct ofono_modem *modem = user_data;
+	struct ifx_data *data = ofono_modem_get_data(modem);
+	int i;
+
+	DBG("");
+
+	for (i = 0; i < NUM_DLC; i++)
+		g_at_chat_send(data->dlcs[i], "ATE0 +CMEE=1", NULL,
+						NULL, NULL, NULL);
+
+	g_at_chat_set_slave(data->dlcs[GPRS1_DLC], data->dlcs[NETREG_DLC]);
+	g_at_chat_set_slave(data->dlcs[GPRS2_DLC], data->dlcs[NETREG_DLC]);
+
+	g_at_chat_send(data->dlcs[AUX_DLC], "AT+CFUN=4", NULL,
+					cfun_enable, modem, NULL);
+
+	data->dlc_init_source = 0;
+
+	return FALSE;
+}
+
 static gboolean dlc_ready_check(gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
@@ -367,10 +395,10 @@ static gboolean dlc_ready_check(gpointer user_data)
 		}
 	}
 
-	g_at_chat_send(data->dlcs[AUX_DLC], "AT+CFUN=4", NULL,
-					cfun_enable, modem, NULL);
-
 	data->dlc_poll_source = 0;
+
+	/* iterate through mainloop */
+	data->dlc_init_source = g_timeout_add_seconds(0, dlc_setup, modem);
 
 	return FALSE;
 
@@ -416,8 +444,8 @@ static void setup_internal_mux(struct ofono_modem *modem)
 		}
         }
 
-	g_at_chat_send(data->dlcs[AUX_DLC], "AT+CFUN=4", NULL,
-					cfun_enable, modem, NULL);
+	/* wait for DLC creation to settle */
+	data->dlc_init_source = g_timeout_add(10, dlc_setup, modem);
 
 	return;
 
@@ -626,7 +654,8 @@ static void ifx_post_sim(struct ofono_modem *modem)
 	DBG("%p", modem);
 
 	ofono_stk_create(modem, 0, "ifxmodem", data->dlcs[AUX_DLC]);
-	ofono_phonebook_create(modem, 0, "atmodem", data->dlcs[AUX_DLC]);
+	ofono_phonebook_create(modem, OFONO_VENDOR_IFX,
+					"atmodem", data->dlcs[AUX_DLC]);
 }
 
 static void ifx_post_online(struct ofono_modem *modem)
@@ -634,7 +663,7 @@ static void ifx_post_online(struct ofono_modem *modem)
 	struct ifx_data *data = ofono_modem_get_data(modem);
 	struct ofono_message_waiting *mw;
 	struct ofono_gprs *gprs;
-	struct ofono_gprs_context *gc;
+	struct ofono_gprs_context *gc1, *gc2;
 
 	DBG("%p", modem);
 
@@ -659,11 +688,25 @@ static void ifx_post_online(struct ofono_modem *modem)
 		ofono_message_waiting_register(mw);
 
 	gprs = ofono_gprs_create(modem, 0, "atmodem", data->dlcs[NETREG_DLC]);
-	gc = ofono_gprs_context_create(modem, 0,
-					"atmodem", data->dlcs[GPRS_DLC]);
+	if (!gprs)
+		return;
 
-	if (gprs && gc)
-		ofono_gprs_add_context(gprs, gc);
+	if (data->mux_ldisc < 0) {
+		gc1 = ofono_gprs_context_create(modem, 0,
+					"atmodem", data->dlcs[GPRS1_DLC]);
+		gc2 = ofono_gprs_context_create(modem, 0,
+					"atmodem", data->dlcs[GPRS2_DLC]);
+	} else {
+		gc1 = ofono_gprs_context_create(modem, 0,
+					"ifxmodem", data->dlcs[GPRS1_DLC]);
+		gc2 = ofono_gprs_context_create(modem, 0,
+					"ifxmodem", data->dlcs[GPRS2_DLC]);
+	}
+
+	if (gc1)
+		ofono_gprs_add_context(gprs, gc1);
+	if (gc2)
+		ofono_gprs_add_context(gprs, gc2);
 }
 
 static struct ofono_modem_driver ifx_driver = {

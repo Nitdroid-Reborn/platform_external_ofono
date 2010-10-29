@@ -167,6 +167,8 @@ static void mux_setup(GAtMux *mux, gpointer user_data)
 	if (data->calypso)
 		g_at_chat_set_wakeup_command(data->chat, "AT\r", 500, 5000);
 
+	g_at_chat_send(data->chat, "ATE0", NULL, NULL, NULL, NULL);
+
 	g_at_chat_send(data->chat, "AT+CFUN=1", none_prefix,
 					cfun_set_on_cb, modem, NULL);
 }
@@ -248,9 +250,14 @@ static int phonesim_enable(struct ofono_modem *modem)
 	}
 
 	if (data->use_mux) {
+		g_at_chat_send(data->chat, "ATE0", NULL, NULL, NULL, NULL);
+
 		g_at_mux_setup_gsm0710(data->chat, mux_setup, modem, NULL);
+
 		g_at_chat_unref(data->chat);
 		data->chat = NULL;
+
+		return -EINPROGRESS;
 	}
 
 	g_at_chat_send(data->chat, "AT+CSCS=\"GSM\"", none_prefix,

@@ -71,11 +71,22 @@ Supported Proactive Commands:
   SimToolkit interface.  Indications that this property has changed are
   handled by the usual means.
 
+- Send DTMF proactive command.  Whenever oFono receives the Send DTMF command,
+  it checks that there are calls in progress and DTMF is possible.  If so,
+  DTMF characters are passed to the voicecall atom to be transmitted to the
+  modem.  The appropriate terminal response is sent to the SIM once the DTMF
+  tones have been played or the call has been disconnected.
+
 - Sim icon support.  oFono supports icons that are stored on the SIM.  If the
   SIM notifies oFono that an icon is available for a particular proactive
   command, oFono passes this information to the UI.  The UI is able to obtain
   the icons by using GetIcon method on the SimManager interface.  The icons
   are read from the SIM and converted into XPM format.
+
+- Text attribute support.  Whenever oFono detects that text attributes have
+  been given to any text or alpha string, it applies them and converts the
+  resulting text to HTML.  The UI is expected to be able to display such
+  HTML formatted text.
 
 Envelopes:
 
@@ -116,3 +127,11 @@ GPRS
 - GPRS suspension event support.  The packet data service may be temporarily
   suspended while a circuit switched service such as voice call or SMS is
   active.
+
+SIM
+===
+
+- Fixed Dialing support.  oFono reads the necessary bits from the SIM to
+  check if FDN support is allocated and enabled in the SIM.  If enabled,
+  oFono halts the SIM initialization procedure and the modem remains in the
+  PRESIM state.  In this state oFono will only allow emergency calls.

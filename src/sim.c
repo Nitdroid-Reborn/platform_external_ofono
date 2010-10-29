@@ -72,6 +72,7 @@ struct ofono_sim {
 	unsigned char efest_length;
 	unsigned char *efsst;
 	unsigned char efsst_length;
+	gboolean fixed_dialing;
 
 	char *imsi;
 
@@ -286,6 +287,7 @@ static DBusMessage *sim_get_properties(DBusConnection *conn,
 	char **locked_pins;
 	const char *pin_name;
 	dbus_bool_t present = sim->state != OFONO_SIM_STATE_NOT_PRESENT;
+	dbus_bool_t fdn;
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -310,7 +312,10 @@ static DBusMessage *sim_get_properties(DBusConnection *conn,
 		ofono_dbus_dict_append(&dict, "SubscriberIdentity",
 					DBUS_TYPE_STRING, &sim->imsi);
 
-	if (sim->mnc_length) {
+	fdn = sim->fixed_dialing;
+	ofono_dbus_dict_append(&dict, "FixedDialing", DBUS_TYPE_BOOLEAN, &fdn);
+
+	if (sim->mnc_length && sim->imsi) {
 		char mcc[OFONO_MAX_MCC_LENGTH + 1];
 		char mnc[OFONO_MAX_MNC_LENGTH + 1];
 		const char *str;
@@ -1241,6 +1246,39 @@ static void sim_retrieve_imsi(struct ofono_sim *sim)
 	sim->driver->read_imsi(sim, sim_imsi_cb, sim);
 }
 
+static void sim_fdn_enabled(struct ofono_sim *sim)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+	const char *path = __ofono_atom_get_path(sim->atom);
+	dbus_bool_t val;
+
+	sim->fixed_dialing = TRUE;
+
+	val = sim->fixed_dialing;
+	ofono_dbus_signal_property_changed(conn, path,
+						OFONO_SIM_MANAGER_INTERFACE,
+						"FixedDialing",
+						DBUS_TYPE_BOOLEAN, &val);
+}
+
+static void sim_efadn_info_read_cb(int ok, unsigned char file_status,
+					int total_length, int record_length,
+					void *userdata)
+{
+	struct ofono_sim *sim = userdata;
+
+	if (!ok)
+		goto out;
+
+	if (file_status != SIM_FILE_STATUS_VALID) {
+		sim_fdn_enabled(sim);
+		return;
+	}
+
+out:
+	sim_retrieve_imsi(sim);
+}
+
 static void sim_efsst_read_cb(int ok, int length, int record,
 				const unsigned char *data,
 				int record_length, void *userdata)
@@ -1257,6 +1295,20 @@ static void sim_efsst_read_cb(int ok, int length, int record,
 
 	sim->efsst = g_memdup(data, length);
 	sim->efsst_length = length;
+
+	/*
+	 * Check if Fixed Dialing is enabled in the SIM-card
+	 * (TS 11.11/TS 51.011, Section 11.5.1: FDN capability request).
+	 * If FDN is activated and ADN is invalidated,
+	 * don't continue initialization routine.
+	 */
+	if (sim_sst_is_active(sim->efsst, sim->efsst_length,
+				SIM_SST_SERVICE_FDN)) {
+		sim_fs_read_info(sim->simfs, SIM_EFADN_FILEID,
+					OFONO_SIM_FILE_STRUCTURE_FIXED,
+					sim_efadn_info_read_cb, sim);
+		return;
+	}
 
 out:
 	sim_retrieve_imsi(sim);
@@ -1278,6 +1330,17 @@ static void sim_efest_read_cb(int ok, int length, int record,
 
 	sim->efest = g_memdup(data, length);
 	sim->efest_length = length;
+
+	/*
+	 * Check if Fixed Dialing is enabled in the USIM-card
+	 * (TS 31.102, Section 5.3.2: FDN capability request).
+	 * If FDN is activated, don't continue initialization routine.
+	 */
+	if (sim_est_is_active(sim->efest, sim->efest_length,
+				SIM_EST_SERVICE_FDN)) {
+		sim_fdn_enabled(sim);
+		return;
+	}
 
 out:
 	sim_retrieve_imsi(sim);
@@ -1357,10 +1420,34 @@ static void sim_efphase_read_cb(int ok, int length, int record,
 {
 	struct ofono_sim *sim = userdata;
 
-	if (!ok || length != 1)
+	if (!ok || length != 1) {
 		sim->phase = OFONO_SIM_PHASE_3G;
-	else
-		sim->phase = data[0];
+
+		ofono_sim_read(sim, SIM_EFUST_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				sim_efust_read_cb, sim);
+
+		return;
+	}
+
+	switch (data[0]) {
+	case 0:
+		sim->phase = OFONO_SIM_PHASE_1G;
+		break;
+	case 2:
+		sim->phase = OFONO_SIM_PHASE_2G;
+		break;
+	case 3:
+		sim->phase = OFONO_SIM_PHASE_2G_PLUS;
+		break;
+	default:
+		ofono_error("Unknown phase");
+		return;
+	}
+
+	ofono_sim_read(sim, SIM_EFSST_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_efsst_read_cb, sim);
 }
 
 static void sim_initialize_after_pin(struct ofono_sim *sim)
@@ -1380,16 +1467,6 @@ static void sim_initialize_after_pin(struct ofono_sim *sim)
 	ofono_sim_read(sim, SIM_EF_CPHS_INFORMATION_FILEID,
 			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
 			sim_cphs_information_read_cb, sim);
-
-	/* Also retrieve the GSM service table */
-	if (sim->phase >= OFONO_SIM_PHASE_3G)
-		ofono_sim_read(sim, SIM_EFUST_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-				sim_efust_read_cb, sim);
-	else
-		ofono_sim_read(sim, SIM_EFSST_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-				sim_efsst_read_cb, sim);
 }
 
 static void sim_pin_query_cb(const struct ofono_error *error,
@@ -1843,6 +1920,8 @@ static void sim_free_state(struct ofono_sim *sim)
 
 	g_free(sim->iidf_image);
 	sim->iidf_image = NULL;
+
+	sim->fixed_dialing = FALSE;
 }
 
 void ofono_sim_inserted_notify(struct ofono_sim *sim, ofono_bool_t inserted)

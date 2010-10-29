@@ -80,17 +80,35 @@ SMS
   Complexity: C1
   Owner: Kristen Carlson Accardi <kristen@linux.intel.com>
 
+- Add CDMA support to the SMS stack. The idea is to support only the PDU
+  mode. To start with only Submit and Deliver message handling for WMT
+  teleservice will be added to bring the basic CDMA SMS send and receive
+  functionality.
+
+  Priority: Low
+  Complexity: C8
+  Owner: Rajesh Kadhiravan Nagaiah <Rajesh.Nagaiah@elektrobit.com>
+
+- Add CDMA Delivery(Status) Report handling to the SMS stack.
+
+  Priority: Low
+  Complexity: C4
+  Owner: Rajesh Kadhiravan Nagaiah <Rajesh.Nagaiah@elektrobit.com>
+
+- Add CDMA Voice Mail Notification handling to the SMS stack. In CDMA the
+  Message Waiting indication is notified through a specific teleservice ID
+  VMN. No update to corresponding elementary files required since they are
+  not present in the R-UIM. This will result in the message waiting
+  indication being initially processed within the SMS atom and then being
+  passed for delivery to the message waiting atom. Furthemore note that in
+  CDMA only voice mail type is supported.
+
+  Priority: Low
+  Complexity: C4
+  Owner: Rajesh Kadhiravan Nagaiah <Rajesh.Nagaiah@elektrobit.com>
 
 SIM / SIM File system
 =====================
-
-- Fixed Dialing support.  oFono should support Fixed Dialing Numbers.  This
-  requires being able to edit the FD phonebook or assume that the FD phonebook
-  has been appropriately bootstrapped.
-
-  Priority: Low
-  Complexity: C2
-  Owner: Petteri Tikander <petteri.tikander@ixonos.com>
 
 - Barred Dialing numbers support.  BDN will not be supported by oFono.
   If BDN service enabled SIM is used, oFono will go into emergency mode.
@@ -202,6 +220,12 @@ GPRS
 
   Priority: High
   Complexity: C2
+
+- IPv6 CP support.  To support IPv6 based GPRS contexts via PPP, GAtPPP
+  needs to be updated to support IPv6CP from RFC 2472.
+
+  Priority: Low
+  Complexity: C4
 
 - On-demand SOCKS5 proxy support for MMS contexts.  When an MMS context type
   is created, oFono should create a SOCKS5 proxy.  When a client connects to
@@ -379,13 +403,6 @@ Sim Toolkit
   Priority: High
   Complexity: C8
 
-- Support Send DTMF proactive command.  The DTMF characters are passed
-  directly to the voicecall atom and the SimToolkitAgent is notified if the
-  USIM has indicated it is acceptable to inform the user.
-
-  Priority: High
-  Complexity: C4
-
 - Support 'SMS-PP' Download Envelope.  Whenever a special type of SMS is
   received indicating that this is an SMS-PP Download message, this message
   will be sent to the SIM via an SMS-PP Download Envelope.  No user interaction
@@ -400,13 +417,6 @@ Sim Toolkit
   Priority: Medium
   Complexity: C1
   Owner: Jeevaka Badrappan <jeevaka.badrappan@elektrobit.com>
-
-- Send HTML formatted text elements for all proactive commands, if the
-  proactive command supplies Text Attribute objects.  The stk_text_to_html
-  utility function can be used to convert raw text into HTML.
-
-  Priority: Low
-  Complexity: C2
 
 
 Emergency Calls

@@ -94,6 +94,13 @@ rules_DATA = $(foreach file,$(udev_files), plugins/97-$(notdir $(file)))
 endif
 endif
 
+builtin_modules += modemconf
+builtin_sources += plugins/modemconf.c
+
+if DATAFILES
+conf_DATA += plugins/modem.conf
+endif
+
 if ISIMODEM
 builtin_modules += isimodem
 builtin_sources += $(gisi_sources) \

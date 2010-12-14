@@ -84,6 +84,8 @@ static const char *setup_rawip(struct ofono_gprs_context *gc)
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	GAtIO *io;
 
+	DBG("");
+
 	io = g_at_chat_get_io(gcd->chat);
 
 	g_at_chat_suspend(gcd->chat);
@@ -110,6 +112,8 @@ static void failed_setup(struct ofono_gprs_context *gc,
 	struct ofono_error error;
 	char buf[64];
 
+	DBG("deactivate %d", deactivate);
+
 	if (deactivate == TRUE) {
 		sprintf(buf, "AT+CGACT=0,%u", gcd->active_context);
 		g_at_chat_send(gcd->chat, buf, none_prefix, NULL, NULL, NULL);
@@ -134,6 +138,8 @@ static void session_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	const char *interface;
 	const char *dns[3];
+
+	DBG("ok %d", ok);
 
 	if (!ok) {
 		ofono_error("Failed to establish session");
@@ -164,8 +170,11 @@ static void dns_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	char buf[64];
 	int cid;
-	const char *address;
+	const char *dns1, *dns2;
 	GAtResultIter iter;
+	gboolean found = FALSE;
+
+	DBG("ok %d", ok);
 
 	if (!ok) {
 		ofono_error("Unable to get DNS details");
@@ -175,24 +184,25 @@ static void dns_cb(gboolean ok, GAtResult *result, gpointer user_data)
 
 	g_at_result_iter_init(&iter, result);
 
-	if (!g_at_result_iter_next(&iter, "+XDNS:"))
+	while (g_at_result_iter_next(&iter, "+XDNS:")) {
+		if (!g_at_result_iter_next_number(&iter, &cid))
+			goto error;
+
+		if (!g_at_result_iter_next_string(&iter, &dns1))
+			goto error;
+
+		if (!g_at_result_iter_next_string(&iter, &dns2))
+			goto error;
+
+		if ((unsigned int) cid == gcd->active_context) {
+			found = TRUE;
+			strncpy(gcd->dns1, dns1, sizeof(gcd->dns1));
+			strncpy(gcd->dns2, dns2, sizeof(gcd->dns2));
+		}
+	}
+
+	if (found == FALSE)
 		goto error;
-
-	if (!g_at_result_iter_next_number(&iter, &cid))
-		goto error;
-
-	if ((unsigned int) cid != gcd->active_context)
-		goto error;
-
-	if (!g_at_result_iter_next_string(&iter, &address))
-		goto error;
-
-	strncpy(gcd->dns1, address, sizeof(gcd->dns1));
-
-	if (!g_at_result_iter_next_string(&iter, &address))
-		goto error;
-
-	strncpy(gcd->dns2, address, sizeof(gcd->dns2));
 
 	ofono_info("IP: %s", gcd->address);
 	ofono_info("DNS: %s, %s", gcd->dns1, gcd->dns2);
@@ -213,6 +223,8 @@ static void address_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	int cid;
 	const char *address;
 	GAtResultIter iter;
+
+	DBG("ok %d", ok);
 
 	if (!ok) {
 		ofono_error("Unable to get context address");
@@ -250,6 +262,8 @@ static void activate_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	char buf[64];
 
+	DBG("ok %d", ok);
+
 	if (!ok) {
 		ofono_error("Unable to activate context");
 		failed_setup(gc, result, FALSE);
@@ -268,7 +282,9 @@ static void setup_cb(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_gprs_context *gc = user_data;
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
-	char buf[64];
+	char buf[128];
+
+	DBG("ok %d", ok);
 
 	if (!ok) {
 		ofono_error("Failed to setup context");
@@ -276,14 +292,25 @@ static void setup_cb(gboolean ok, GAtResult *result, gpointer user_data)
 		return;
 	}
 
+	if (gcd->username[0] && gcd->password[0])
+		sprintf(buf, "AT+XGAUTH=%u,1,\"%s\",\"%s\"",
+			gcd->active_context, gcd->username, gcd->password);
+	else
+		sprintf(buf, "AT+XGAUTH=%u,0,\"\",\"\"", gcd->active_context);
+
+	if (g_at_chat_send(gcd->chat, buf, none_prefix, NULL, NULL, NULL) == 0)
+		goto error;
+
 	sprintf(buf, "AT+XDNS=%u,1", gcd->active_context);
-	g_at_chat_send(gcd->chat, buf, none_prefix, NULL, NULL, NULL);
+	if (g_at_chat_send(gcd->chat, buf, none_prefix, NULL, NULL, NULL) == 0)
+		goto error;
 
 	sprintf(buf, "AT+CGACT=1,%u", gcd->active_context);
 	if (g_at_chat_send(gcd->chat, buf, none_prefix,
 				activate_cb, gc, NULL) > 0)
 		return;
 
+error:
 	failed_setup(gc, NULL, FALSE);
 }
 
@@ -294,6 +321,8 @@ static void ifx_gprs_activate_primary(struct ofono_gprs_context *gc,
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	char buf[OFONO_GPRS_MAX_APN_LENGTH + 128];
 	int len;
+
+	DBG("cid %u", ctx->cid);
 
 	gcd->active_context = ctx->cid;
 	gcd->up_cb = cb;
@@ -321,6 +350,8 @@ static void deactivate_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	struct ofono_gprs_context *gc = user_data;
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 
+	DBG("ok %d", ok);
+
 	g_at_rawip_unref(gcd->rawip);
 	gcd->rawip = NULL;
 
@@ -333,14 +364,14 @@ static void deactivate_cb(gboolean ok, GAtResult *result, gpointer user_data)
 }
 
 static void ifx_gprs_deactivate_primary(struct ofono_gprs_context *gc,
-					unsigned int id,
+					unsigned int cid,
 					ofono_gprs_context_cb_t cb, void *data)
 {
 	struct gprs_context_data *gcd = ofono_gprs_context_get_data(gc);
 	GAtChat *chat = g_at_chat_get_slave(gcd->chat);
 	char buf[64];
 
-	DBG("");
+	DBG("cid %u", cid);
 
 	gcd->state = STATE_DISABLING;
 	gcd->down_cb = cb;
@@ -381,18 +412,24 @@ static void cgev_notify(GAtResult *result, gpointer user_data)
 	if (!g_at_result_iter_next_number(&iter, &cid))
 		return;
 
+	DBG("cid %d", cid);
+
 	if ((unsigned int) cid != gcd->active_context)
 		return;
 
 	if (gcd->state != STATE_IDLE && gcd->rawip) {
+		g_at_rawip_shutdown(gcd->rawip);
+
 		g_at_rawip_unref(gcd->rawip);
 		gcd->rawip = NULL;
-
-		gcd->active_context = 0;
-		gcd->state = STATE_IDLE;
-
-		g_at_chat_resume(gcd->chat);
 	}
+
+	ofono_gprs_context_deactivated(gc, gcd->active_context);
+
+	gcd->active_context = 0;
+	gcd->state = STATE_IDLE;
+
+	g_at_chat_resume(gcd->chat);
 }
 
 static int ifx_gprs_context_probe(struct ofono_gprs_context *gc,
@@ -401,6 +438,8 @@ static int ifx_gprs_context_probe(struct ofono_gprs_context *gc,
 	GAtChat *chat = data;
 	struct gprs_context_data *gcd;
 	struct stat st;
+
+	DBG("");
 
 	if (stat(TUN_SYSFS_DIR, &st) < 0) {
 		ofono_error("Missing support for TUN/TAP devices");

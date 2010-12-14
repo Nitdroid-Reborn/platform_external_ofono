@@ -1,3 +1,41 @@
+ver 0.36:
+	Fix issue with CLIR Invocation and Suppression.
+	Fix issue with power/online transition with ZTE devices.
+	Fix segmentation fault when removing Nokia Datacard.
+	Add support for Nokia CS-17 dongles.
+	Add support for Ericsson F5521gw devices.
+	Add support for CAIF network interface management.
+	Add support for COLR in generic AT modem driver.
+	Add support for SMS Point-to-Point download to UICC.
+	Add support for checking specific service availability.
+	Add support for handling null text field for STK.
+
+ver 0.35:
+	Fix issue with FDN and BDN enabled checks.
+	Fix issue with capabilities and Phonet support.
+	Fix issue with timeout for ISI network deregistration.
+	Add support for Push Notification interface.
+	Add support for Smart Messaging interface.
+	Remove generic AT command modem plugin.
+
+ver 0.34:
+	Fix issue with sim_fs_op_error handling.
+	Fix issue with not handling GPRS context driver failures.
+	Add support for multiple GPRS context activations.
+	Add support for deactivating all GPRS contexts.
+	Add support for configuring MMS context settings.
+	Add support for barred dialing indication property.
+	Add support for fast dormancy settings property.
+	Add support for handling Play Tone proactive command.
+	Add support for indicating handled STK proactive commands.
+	Add support for two active GPRS contexts with MBM modems.
+	Add support for time zone reporting with Ericsson MBM modems.
+	Add support for detecting IFX modems stuck in multiplexer mode.
+	Add support for IFX using up to three active GPRS contexts.
+	Add support for IFX device shutdown when DLC disconnects.
+	Add support for Phonesim specific configuration files.
+	Remove deprecated modem.conf support.
+
 ver 0.33:
 	Fix wrong string to enum mapping of radio settings.
 	Fix issue with MMI code to bearer class mappings.

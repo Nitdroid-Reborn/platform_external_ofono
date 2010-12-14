@@ -140,6 +140,11 @@ int main(int argc, char **argv)
 
 #ifdef HAVE_CAPNG
 	/* Drop capabilities */
+	capng_clear(CAPNG_SELECT_BOTH);
+	capng_updatev(CAPNG_ADD, CAPNG_EFFECTIVE | CAPNG_PERMITTED,
+				CAP_NET_BIND_SERVICE, CAP_NET_ADMIN,
+				CAP_NET_RAW, CAP_SYS_ADMIN, -1);
+	capng_apply(CAPNG_SELECT_BOTH);
 #endif
 
 	sigemptyset(&mask);

@@ -57,6 +57,7 @@ DBusMessage *__ofono_error_in_use(DBusMessage *msg);
 DBusMessage *__ofono_error_not_attached(DBusMessage *msg);
 DBusMessage *__ofono_error_attach_in_progress(DBusMessage *msg);
 DBusMessage *__ofono_error_canceled(DBusMessage *msg);
+DBusMessage *__ofono_error_access_denied(DBusMessage *msg);
 
 void __ofono_dbus_pending_reply(DBusMessage **msg, DBusMessage *reply);
 
@@ -177,6 +178,13 @@ unsigned int __ofono_modemwatch_add(ofono_modemwatch_cb_t cb, void *user,
 					ofono_destroy_func destroy);
 gboolean __ofono_modemwatch_remove(unsigned int id);
 
+typedef void (*ofono_modem_online_notify_func)(ofono_bool_t online, void *data);
+unsigned int __ofono_modem_add_online_watch(struct ofono_modem *modem,
+					ofono_modem_online_notify_func notify,
+					void *data, ofono_destroy_func destroy);
+void __ofono_modem_remove_online_watch(struct ofono_modem *modem,
+					unsigned int id);
+
 #include <ofono/call-barring.h>
 
 gboolean __ofono_call_barring_is_busy(struct ofono_call_barring *cb);
@@ -232,9 +240,13 @@ enum ofono_sms_submit_flag {
 	OFONO_SMS_SUBMIT_FLAG_REQUEST_SR =	0x1,
 	OFONO_SMS_SUBMIT_FLAG_RECORD_HISTORY =	0x2,
 	OFONO_SMS_SUBMIT_FLAG_RETRY =		0x4,
+	OFONO_SMS_SUBMIT_FLAG_EXPOSE_DBUS =	0x8,
 };
 
 typedef void (*ofono_sms_txq_submit_cb_t)(gboolean ok, void *data);
+typedef void (*ofono_sms_txq_queued_cb_t)(struct ofono_sms *sms,
+						const struct ofono_uuid *uuid,
+						void *data);
 typedef void (*ofono_sms_text_notify_cb_t)(const char *from,
 						const struct tm *remote,
 						const struct tm *local,
@@ -250,8 +262,16 @@ typedef void (*ofono_sms_datagram_notify_cb_t)(const char *from,
 
 int __ofono_sms_txq_submit(struct ofono_sms *sms, GSList *list,
 				unsigned int flags, struct ofono_uuid *uuid,
-				ofono_sms_txq_submit_cb_t cb,
-				void *data, ofono_destroy_func destroy);
+				ofono_sms_txq_queued_cb_t, void *data);
+
+int __ofono_sms_txq_set_submit_notify(struct ofono_sms *sms,
+					struct ofono_uuid *uuid,
+					ofono_sms_txq_submit_cb_t cb,
+					void *data,
+					ofono_destroy_func destroy);
+
+const char *__ofono_sms_message_path_from_uuid(struct ofono_sms *sms,
+						const struct ofono_uuid *uuid);
 
 unsigned int __ofono_sms_text_watch_add(struct ofono_sms *sms,
 					ofono_sms_text_notify_cb_t cb,
@@ -266,11 +286,26 @@ unsigned int __ofono_sms_datagram_watch_add(struct ofono_sms *sms,
 gboolean __ofono_sms_datagram_watch_remove(struct ofono_sms *sms,
 					unsigned int id);
 
+unsigned short __ofono_sms_get_next_ref(struct ofono_sms *sms);
+
 #include <ofono/sim.h>
+
+ofono_bool_t __ofono_sim_service_available(struct ofono_sim *sim,
+						int ust_service,
+						int sst_service);
+
 #include <ofono/stk.h>
+
+typedef void (*__ofono_sms_sim_download_cb_t)(ofono_bool_t ok,
+						const unsigned char *tp_ud,
+						int len, void *data);
 
 struct cbs;
 void __ofono_cbs_sim_download(struct ofono_stk *stk, const struct cbs *msg);
+
+struct sms;
+int __ofono_sms_sim_download(struct ofono_stk *stk, const struct sms *msg,
+				__ofono_sms_sim_download_cb_t cb, void *data);
 
 #include <ofono/ssn.h>
 

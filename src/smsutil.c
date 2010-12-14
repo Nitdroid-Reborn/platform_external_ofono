@@ -158,7 +158,7 @@ gboolean sms_dcs_decode(guint8 dcs, enum sms_class *cls,
 		comp = (dcs & 0x20) ? TRUE : FALSE;
 
 		if (dcs & 0x10)
-			cl = (enum sms_class)(dcs & 0x03);
+			cl = (enum sms_class) (dcs & 0x03);
 		else
 			cl = SMS_CLASS_UNSPECIFIED;
 
@@ -177,7 +177,7 @@ gboolean sms_dcs_decode(guint8 dcs, enum sms_class *cls,
 		else
 			ch = SMS_CHARSET_7BIT;
 
-		cl = (enum sms_class)(dcs & 0x03);
+		cl = (enum sms_class) (dcs & 0x03);
 
 		break;
 	default:
@@ -379,20 +379,38 @@ gboolean sms_decode_scts(const unsigned char *pdu, int len,
 	next_octet(pdu, len, offset, &oct);
 	out->year = sms_decode_semi_octet(oct);
 
+	if (out->year > 99)
+		return FALSE;
+
 	next_octet(pdu, len, offset, &oct);
 	out->month = sms_decode_semi_octet(oct);
+
+	if (out->month > 12)
+		return FALSE;
 
 	next_octet(pdu, len, offset, &oct);
 	out->day = sms_decode_semi_octet(oct);
 
+	if (out->day > 31)
+		return FALSE;
+
 	next_octet(pdu, len, offset, &oct);
 	out->hour = sms_decode_semi_octet(oct);
+
+	if (out->hour > 23)
+		return FALSE;
 
 	next_octet(pdu, len, offset, &oct);
 	out->minute = sms_decode_semi_octet(oct);
 
+	if (out->minute > 59)
+		return FALSE;
+
 	next_octet(pdu, len, offset, &oct);
 	out->second = sms_decode_semi_octet(oct);
+
+	if (out->second > 59)
+		return FALSE;
 
 	next_octet(pdu, len, offset, &oct);
 
@@ -407,6 +425,9 @@ gboolean sms_decode_scts(const unsigned char *pdu, int len,
 
 	if (oct & 0x08)
 		out->timezone = out->timezone * -1;
+
+	if ((out->timezone > 12*4-1) || (out->timezone < -(12*4-1)))
+		return FALSE;
 
 	return TRUE;
 }
@@ -2239,7 +2260,7 @@ char *sms_decode_text(GSList *sms_list)
 								locking_shift,
 								single_shift);
 		} else {
-			const gchar *from = (const gchar *)(ud + taken);
+			const gchar *from = (const gchar *) (ud + taken);
 			/*
 			 * According to the spec: A UCS2 character shall not be
 			 * split in the middle; if the length of the User Data
@@ -2481,7 +2502,7 @@ void sms_assembly_free(struct sms_assembly *assembly)
 	for (l = assembly->assembly_list; l; l = l->next) {
 		struct sms_assembly_node *node = l->data;
 
-		g_slist_foreach(node->fragment_list, (GFunc)g_free, 0);
+		g_slist_foreach(node->fragment_list, (GFunc) g_free, 0);
 		g_slist_free(node->fragment_list);
 		g_free(node);
 	}
@@ -2632,7 +2653,7 @@ void sms_assembly_expire(struct sms_assembly *assembly, time_t before)
 
 		sms_assembly_backup_free(assembly, node);
 
-		g_slist_foreach(node->fragment_list, (GFunc)g_free, 0);
+		g_slist_foreach(node->fragment_list, (GFunc) g_free, 0);
 		g_slist_free(node->fragment_list);
 		g_free(node);
 
@@ -2739,7 +2760,7 @@ struct status_report_assembly *status_report_assembly_new(const char *imsi)
 				g_new0(struct status_report_assembly, 1);
 
 	ret->assembly_table = g_hash_table_new_full(g_str_hash, g_str_equal,
-				g_free, (GDestroyNotify)g_hash_table_destroy);
+				g_free, (GDestroyNotify) g_hash_table_destroy);
 
 	if (imsi) {
 		ret->imsi = imsi;
@@ -3116,17 +3137,142 @@ static inline GSList *sms_list_append(GSList *l, const struct sms *in)
 }
 
 /*
- * Prepares the text for transmission.  Breaks up into fragments if
+ * Prepares a datagram for transmission.  Breaks up into fragments if
  * necessary using ref as the concatenated message reference number.
- * Returns a list of sms messages in order.  If ref_offset is given,
- * then the ref_offset contains the reference number offset or 0
- * if no concatenation took place.
+ * Returns a list of sms messages in order.
  *
  * @use_delivery_reports: value for the Status-Report-Request field
  *     (23.040 3.2.9, 9.2.2.2)
  */
-GSList *sms_text_prepare(const char *utf8, guint16 ref,
-				gboolean use_16bit, int *ref_offset,
+GSList *sms_datagram_prepare(const char *to,
+				const unsigned char *data, unsigned int len,
+				guint16 ref, gboolean use_16bit_ref,
+				unsigned short src, unsigned short dst,
+				gboolean use_16bit_port,
+				gboolean use_delivery_reports)
+{
+	struct sms template;
+	unsigned int offset;
+	unsigned int written;
+	unsigned int left;
+	guint8 seq;
+	GSList *r = NULL;
+
+	memset(&template, 0, sizeof(struct sms));
+	template.type = SMS_TYPE_SUBMIT;
+	template.submit.rd = FALSE;
+	template.submit.vpf = SMS_VALIDITY_PERIOD_FORMAT_RELATIVE;
+	template.submit.rp = FALSE;
+	template.submit.srr = use_delivery_reports;
+	template.submit.mr = 0;
+	template.submit.vp.relative = 0xA7; /* 24 Hours */
+	template.submit.dcs = 0x04; /* Class Unspecified, 8 Bit */
+	template.submit.udhi = TRUE;
+	sms_address_from_string(&template.submit.daddr, to);
+
+	offset = 1;
+
+	if (use_16bit_port) {
+		template.submit.ud[0] += 6;
+		template.submit.ud[offset] = SMS_IEI_APPLICATION_ADDRESS_16BIT;
+		template.submit.ud[offset + 1] = 4;
+		template.submit.ud[offset + 2] = (dst & 0xff00) >> 8;
+		template.submit.ud[offset + 3] = dst & 0xff;
+		template.submit.ud[offset + 4] = (src & 0xff00) >> 8;
+		template.submit.ud[offset + 5] = src & 0xff;
+
+		offset += 6;
+	} else {
+		template.submit.ud[0] += 4;
+		template.submit.ud[offset] = SMS_IEI_APPLICATION_ADDRESS_8BIT;
+		template.submit.ud[offset + 1] = 2;
+		template.submit.ud[offset + 2] = dst & 0xff;
+		template.submit.ud[offset + 3] = src & 0xff;
+
+		offset += 4;
+	}
+
+	if (len <= (140 - offset)) {
+		template.submit.udl = len + offset;
+		memcpy(template.submit.ud + offset, data, len);
+
+		return sms_list_append(NULL, &template);
+	}
+
+	if (use_16bit_ref) {
+		template.submit.ud[0] += 6;
+		template.submit.ud[offset] = SMS_IEI_CONCATENATED_16BIT;
+		template.submit.ud[offset + 1] = 4;
+		template.submit.ud[offset + 2] = (ref & 0xff00) >> 8;
+		template.submit.ud[offset + 3] = ref & 0xff;
+
+		offset += 6;
+	} else {
+		template.submit.ud[0] += 5;
+		template.submit.ud[offset] = SMS_IEI_CONCATENATED_8BIT;
+		template.submit.ud[offset + 1] = 3;
+		template.submit.ud[offset + 2] = ref & 0xff;
+
+		offset += 5;
+	}
+
+	seq = 0;
+	left = len;
+	written = 0;
+
+	while (left > 0) {
+		unsigned int chunk;
+
+		seq += 1;
+
+		chunk = 140 - offset;
+		if (left < chunk)
+			chunk = left;
+
+		template.submit.udl = chunk + offset;
+		memcpy(template.submit.ud + offset, data + written, chunk);
+
+		written += chunk;
+		left -= chunk;
+
+		template.submit.ud[offset - 1] = seq;
+
+		r = sms_list_append(r, &template);
+
+		if (seq == 255)
+			break;
+	}
+
+	if (left > 0) {
+		g_slist_foreach(r, (GFunc) g_free, NULL);
+		g_slist_free(r);
+
+		return NULL;
+	} else {
+		GSList *l;
+
+		for (l = r; l; l = l->next) {
+			struct sms *sms = l->data;
+
+			sms->submit.ud[offset - 2] = seq;
+		}
+	}
+
+	r = g_slist_reverse(r);
+
+	return r;
+}
+
+/*
+ * Prepares the text for transmission.  Breaks up into fragments if
+ * necessary using ref as the concatenated message reference number.
+ * Returns a list of sms messages in order.
+ *
+ * @use_delivery_reports: value for the Status-Report-Request field
+ *     (23.040 3.2.9, 9.2.2.2)
+ */
+GSList *sms_text_prepare(const char *to, const char *utf8, guint16 ref,
+				gboolean use_16bit,
 				gboolean use_delivery_reports)
 {
 	struct sms template;
@@ -3146,6 +3292,7 @@ GSList *sms_text_prepare(const char *utf8, guint16 ref,
 	template.submit.srr = use_delivery_reports;
 	template.submit.mr = 0;
 	template.submit.vp.relative = 0xA7; /* 24 Hours */
+	sms_address_from_string(&template.submit.daddr, to);
 
 	/* UDHI, UDL, UD and DCS actually depend on what we have in the text */
 	gsm_encoded = convert_utf8_to_gsm(utf8, -1, NULL, &written, 0);
@@ -3170,9 +3317,6 @@ GSList *sms_text_prepare(const char *utf8, guint16 ref,
 		template.submit.udhi = FALSE;
 
 	if (gsm_encoded && (written <= sms_text_capacity_gsm(160, offset))) {
-		if (ref_offset)
-			*ref_offset = 0;
-
 		template.submit.udl = written + (offset * 8 + 6) / 7;
 		pack_7bit_own_buf(gsm_encoded, written, offset, FALSE, NULL,
 					0, template.submit.ud + offset);
@@ -3182,9 +3326,6 @@ GSList *sms_text_prepare(const char *utf8, guint16 ref,
 	}
 
 	if (ucs2_encoded && (written <= (140 - offset))) {
-		if (ref_offset)
-			*ref_offset = 0;
-
 		template.submit.udl = written + offset;
 		memcpy(template.submit.ud + offset, ucs2_encoded, written);
 
@@ -3197,22 +3338,19 @@ GSList *sms_text_prepare(const char *utf8, guint16 ref,
 	if (!offset)
 		offset = 1;
 
-	if (ref_offset)
-		*ref_offset = offset + 2;
-
 	if (use_16bit) {
 		template.submit.ud[0] += 6;
 		template.submit.ud[offset] = SMS_IEI_CONCATENATED_16BIT;
 		template.submit.ud[offset + 1] = 4;
-		template.submit.ud[offset + 2] = (ref & 0xf0) >> 8;
-		template.submit.ud[offset + 3] = ref & 0xf;
+		template.submit.ud[offset + 2] = (ref & 0xff00) >> 8;
+		template.submit.ud[offset + 3] = ref & 0xff;
 
 		offset += 6;
 	} else {
 		template.submit.ud[0] += 5;
 		template.submit.ud[offset] = SMS_IEI_CONCATENATED_8BIT;
 		template.submit.ud[offset + 1] = 3;
-		template.submit.ud[offset + 2] = ref & 0xf;
+		template.submit.ud[offset + 2] = ref & 0xff;
 
 		offset += 5;
 	}
@@ -3269,7 +3407,7 @@ GSList *sms_text_prepare(const char *utf8, guint16 ref,
 		g_free(ucs2_encoded);
 
 	if (left > 0) {
-		g_slist_foreach(r, (GFunc)g_free, NULL);
+		g_slist_foreach(r, (GFunc) g_free, NULL);
 		g_slist_free(r);
 
 		return NULL;
@@ -3308,7 +3446,7 @@ gboolean cbs_dcs_decode(guint8 dcs, gboolean *udhi, enum sms_class *cls,
 	case 0:
 		ch = SMS_CHARSET_7BIT;
 		cl = SMS_CLASS_UNSPECIFIED;
-		lang = (enum cbs_language)lower;
+		lang = (enum cbs_language) lower;
 		break;
 	case 1:
 		if (lower > 1)
@@ -3329,7 +3467,7 @@ gboolean cbs_dcs_decode(guint8 dcs, gboolean *udhi, enum sms_class *cls,
 
 		ch = SMS_CHARSET_7BIT;
 		cl = SMS_CLASS_UNSPECIFIED;
-		lang = (enum cbs_language)dcs;
+		lang = (enum cbs_language) dcs;
 		break;
 	case 4:
 	case 5:
@@ -3338,21 +3476,21 @@ gboolean cbs_dcs_decode(guint8 dcs, gboolean *udhi, enum sms_class *cls,
 		comp = (dcs & 0x20) ? TRUE : FALSE;
 
 		if (dcs & 0x10)
-			cl = (enum sms_class)(dcs & 0x03);
+			cl = (enum sms_class) (dcs & 0x03);
 		else
 			cl = SMS_CLASS_UNSPECIFIED;
 
 		if (((dcs & 0x0c) >> 2) < 3)
-			ch = (enum sms_charset)((dcs & 0x0c) >> 2);
+			ch = (enum sms_charset) ((dcs & 0x0c) >> 2);
 		else
 			return FALSE;
 
 		break;
 	case 9:
 		udh = TRUE;
-		cl = (enum sms_class)(dcs & 0x03);
+		cl = (enum sms_class) (dcs & 0x03);
 		if (((dcs & 0x0c) >> 2) < 3)
-			ch = (enum sms_charset)((dcs & 0x0c) >> 2);
+			ch = (enum sms_charset) ((dcs & 0x0c) >> 2);
 		else
 			return FALSE;
 
@@ -3367,7 +3505,7 @@ gboolean cbs_dcs_decode(guint8 dcs, gboolean *udhi, enum sms_class *cls,
 			ch = SMS_CHARSET_7BIT;
 
 		if (lower & 0x3)
-			cl = (enum sms_class)(lower & 0x3);
+			cl = (enum sms_class) (lower & 0x3);
 		else
 			cl = SMS_CLASS_UNSPECIFIED;
 
@@ -3720,7 +3858,7 @@ char *cbs_decode_text(GSList *cbs_list, char *iso639_lang)
 	if (charset == SMS_CHARSET_7BIT)
 		utf8 = convert_gsm_to_utf8(buf, bufsize, NULL, NULL, 0);
 	else
-		utf8 = g_convert((char *)buf, bufsize, "UTF-8//TRANSLIT",
+		utf8 = g_convert((char *) buf, bufsize, "UTF-8//TRANSLIT",
 					"UCS-2BE", NULL, NULL, NULL);
 
 	g_free(buf);
@@ -3759,7 +3897,7 @@ void cbs_assembly_free(struct cbs_assembly *assembly)
 	for (l = assembly->assembly_list; l; l = l->next) {
 		struct cbs_assembly_node *node = l->data;
 
-		g_slist_foreach(node->pages, (GFunc)g_free, 0);
+		g_slist_foreach(node->pages, (GFunc) g_free, 0);
 		g_slist_free(node->pages);
 		g_free(node);
 	}
@@ -3839,7 +3977,7 @@ static void cbs_assembly_expire(struct cbs_assembly *assembly,
 		else
 			assembly->assembly_list = l->next;
 
-		g_slist_foreach(node->pages, (GFunc)g_free, NULL);
+		g_slist_foreach(node->pages, (GFunc) g_free, NULL);
 		g_slist_free(node->pages);
 		g_free(node->pages);
 		tmp = l;
@@ -4149,7 +4287,7 @@ GSList *cbs_extract_topic_ranges(const char *ranges)
 	}
 
 	tmp = cbs_optimize_ranges(ret);
-	g_slist_foreach(ret, (GFunc)g_free, NULL);
+	g_slist_foreach(ret, (GFunc) g_free, NULL);
 	g_slist_free(ret);
 
 	return tmp;

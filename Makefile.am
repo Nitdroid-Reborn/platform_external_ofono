@@ -94,13 +94,6 @@ rules_DATA = $(foreach file,$(udev_files), plugins/97-$(notdir $(file)))
 endif
 endif
 
-builtin_modules += modemconf
-builtin_sources += plugins/modemconf.c
-
-if DATAFILES
-conf_DATA += plugins/modem.conf
-endif
-
 if ISIMODEM
 builtin_modules += isimodem
 builtin_sources += $(gisi_sources) \
@@ -232,15 +225,20 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/stemodem/stemodem.c \
 			drivers/stemodem/voicecall.c \
 			drivers/stemodem/radio-settings.c \
+			drivers/stemodem/caif_rtnl.c \
+			drivers/stemodem/caif_rtnl.h \
 			drivers/stemodem/gprs-context.c \
 			drivers/stemodem/caif_socket.h \
 			drivers/stemodem/if_caif.h
 
+if PHONESIM
 builtin_modules += phonesim
 builtin_sources += plugins/phonesim.c
 
-builtin_modules += atgen
-builtin_sources += plugins/atgen.c
+if DATAFILES
+conf_DATA += plugins/phonesim.conf
+endif
+endif
 
 builtin_modules += g1
 builtin_sources += plugins/g1.c
@@ -299,6 +297,9 @@ endif
 builtin_modules += smart_messaging
 builtin_sources += plugins/smart-messaging.c
 
+builtin_modules += push_notification
+builtin_sources += plugins/push-notification.c
+
 sbin_PROGRAMS = src/ofonod
 
 src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
@@ -315,7 +316,8 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
 			src/gprs.c src/idmap.h src/idmap.c \
 			src/radio-settings.c src/stkutil.h src/stkutil.c \
 			src/nettime.c src/stkagent.c src/stkagent.h \
-			src/simfs.c src/simfs.h src/audio-settings.c
+			src/simfs.c src/simfs.h src/audio-settings.c \
+			src/smsagent.c src/smsagent.h
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -356,9 +358,11 @@ doc_files = doc/overview.txt doc/ofono-paper.txt \
 
 
 test_scripts = test/backtrace \
-		test/create-context \
+		test/create-internet-context \
+		test/create-mms-context \
 		test/activate-context \
 		test/deactivate-context \
+		test/deactivate-all \
 		test/dial-number \
 		test/list-calls \
 		test/answer-calls \
@@ -367,10 +371,11 @@ test_scripts = test/backtrace \
 		test/disable-modem \
 		test/enable-modem \
 		test/enter-pin \
+		test/reset-pin \
 		test/hangup-all \
 		test/hangup-active \
+		test/set-mms-details \
 		test/set-roaming-allowed \
-		test/set-context \
 		test/list-contexts \
 		test/list-modems \
 		test/list-operators \
@@ -409,14 +414,18 @@ test_scripts = test/backtrace \
 		test/unlock-pin \
 		test/enable-gprs \
 		test/disable-gprs \
-		test/get-icon
+		test/get-icon \
+		test/set-fast-dormancy \
+		test/test-push-notification \
+		test/test-smart-messaging \
+		test/send-vcard
 
 if TEST
 testdir = $(pkglibdir)/test
 test_SCRIPTS = $(test_scripts)
 endif
 
-conf_files = src/ofono.conf plugins/modem.conf
+conf_files = src/ofono.conf plugins/phonesim.conf
 
 EXTRA_DIST = src/genbuiltin $(conf_files) $(udev_files) \
 					$(doc_files) $(test_scripts)

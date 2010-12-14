@@ -18,19 +18,26 @@ for path, properties in modems:
 					'org.ofono.ConnectionManager')
 
 	contexts = connman.GetContexts()
+	path = "";
 
-	if (len(contexts) == 0):
-		path = connman.AddContext("internet")
-	else:
-		path = contexts[0][0]
+	for i, properties in contexts:
+		if properties["Type"] == "mms":
+			path = i
+			break
+
+	if path == "":
+		print "No MMS context"
+		exit(1)
 
 	context = dbus.Interface(bus.get_object('org.ofono', path),
 					'org.ofono.ConnectionContext')
 
-	try:
-		context.SetProperty("AccessPointName", sys.argv[1])
-	except IndexError:
-		print "Usage: %s <apn_name>" % sys.argv[0]
+	if len(sys.argv) < 3:
+		print "Usage: %s <proxy> <center>" % (sys.argv[0])
 		exit(1)
 
-	print "Setting APN of %s to %s" % (path, sys.argv[1])
+	context.SetProperty("MessageProxy", sys.argv[1])
+	print "Setting MMS Proxy to %s" % (sys.argv[1])
+
+	context.SetProperty("MessageCenter", sys.argv[2])
+	print "Setting MMSC to %s" % (sys.argv[2])

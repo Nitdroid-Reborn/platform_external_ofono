@@ -75,6 +75,9 @@ struct ofono_stk {
 	struct stk_icon_id idle_mode_icon;
 	struct timeval get_inkey_start_ts;
 	int dtmf_id;
+
+	__ofono_sms_sim_download_cb_t sms_pp_cb;
+	void *sms_pp_userdata;
 };
 
 struct envelope_op {
@@ -257,12 +260,51 @@ void __ofono_cbs_sim_download(struct ofono_stk *stk, const struct cbs *msg)
 		stk_cbs_download_cb(stk, FALSE, NULL, -1);
 }
 
+static void stk_sms_download_cb(struct ofono_stk *stk, gboolean ok,
+				const unsigned char *data, int len)
+{
+	DBG("SMS-PP download to UICC reported %s", ok ? "success" : "error");
+
+	if (stk->sms_pp_cb)
+		stk->sms_pp_cb(ok, data, len, stk->sms_pp_userdata);
+}
+
+int __ofono_sms_sim_download(struct ofono_stk *stk, const struct sms *msg,
+				__ofono_sms_sim_download_cb_t cb, void *data)
+{
+	struct stk_envelope e;
+
+	if (msg->type != SMS_TYPE_DELIVER)
+		return -EINVAL;
+
+	DBG("");
+
+	memset(&e, 0, sizeof(e));
+
+	e.type = STK_ENVELOPE_TYPE_SMS_PP_DOWNLOAD;
+	e.src = STK_DEVICE_IDENTITY_TYPE_NETWORK;
+
+	e.sms_pp_download.address.number = (char *) msg->sc_addr.address;
+	e.sms_pp_download.address.ton_npi = msg->sc_addr.numbering_plan |
+		(msg->sc_addr.number_type << 4);
+	memcpy(&e.sms_pp_download.message, &msg->deliver, sizeof(msg->deliver));
+
+	stk->sms_pp_cb = cb;
+	stk->sms_pp_userdata = data;
+
+	return stk_send_envelope(stk, &e, stk_sms_download_cb,
+					ENVELOPE_RETRIES_DEFAULT);
+}
+
 static char *dbus_apply_text_attributes(const char *text,
 					const struct stk_text_attribute *attr)
 {
 	uint16_t buf[256], *i = buf;
 	const uint8_t *j = attr->attributes;
 	const uint8_t *end = j + attr->len;
+
+	if (text == NULL)
+		return NULL;
 
 	if (attr->len & 3)
 		return NULL;
@@ -435,6 +477,24 @@ static void stk_alpha_id_set(struct ofono_stk *stk,
 static void stk_alpha_id_unset(struct ofono_stk *stk)
 {
 	/* TODO */
+}
+
+static int duration_to_msecs(const struct stk_duration *duration)
+{
+	int msecs = duration->interval;
+
+	switch (duration->unit) {
+	case STK_DURATION_TYPE_MINUTES:
+		msecs *= 60;
+		/* Fall through.  */
+	case STK_DURATION_TYPE_SECONDS:
+		msecs *= 10;
+		/* Fall through.  */
+	case STK_DURATION_TYPE_SECOND_TENTHS:
+		msecs *= 100;
+	}
+
+	return msecs;
 }
 
 static DBusMessage *stk_get_properties(DBusConnection *conn,
@@ -774,6 +834,7 @@ static gboolean handle_command_send_sms(const struct stk_command *cmd,
 	struct ofono_atom *sms_atom;
 	struct ofono_sms *sms;
 	GSList msg_list;
+	struct ofono_uuid uuid;
 
 	sms_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_SMS);
 
@@ -789,13 +850,13 @@ static gboolean handle_command_send_sms(const struct stk_command *cmd,
 	msg_list.data = (void *) &cmd->send_sms.gsm_sms;
 	msg_list.next = NULL;
 
-	if (__ofono_sms_txq_submit(sms, &msg_list, 0, NULL, send_sms_submit_cb,
-				stk->extern_req, g_free) < 0) {
-		g_free(stk->extern_req);
+	if (__ofono_sms_txq_submit(sms, &msg_list, 0, &uuid, NULL, NULL) < 0) {
 		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
 		return TRUE;
 	}
 
+	__ofono_sms_txq_set_submit_notify(sms, &uuid, send_sms_submit_cb,
+						stk->extern_req, g_free);
 	stk->cancel_cmd = send_sms_cancel;
 
 	stk_alpha_id_set(stk, cmd->send_sms.alpha_id, &cmd->send_sms.text_attr,
@@ -804,6 +865,7 @@ static gboolean handle_command_send_sms(const struct stk_command *cmd,
 	return FALSE;
 }
 
+/* Note: may be called from ofono_stk_proactive_command_handled_notify */
 static gboolean handle_command_set_idle_text(const struct stk_command *cmd,
 						struct stk_response *rsp,
 						struct ofono_stk *stk)
@@ -1000,22 +1062,13 @@ static gboolean handle_command_poll_interval(const struct stk_command *cmd,
 	struct ofono_modem *modem = __ofono_atom_get_modem(stk->atom);
 	int seconds;
 
-	switch (cmd->poll_interval.duration.unit) {
-	case STK_DURATION_TYPE_MINUTES:
-		seconds = cmd->poll_interval.duration.interval * 60;
-		break;
-	case STK_DURATION_TYPE_SECONDS:
-		seconds = cmd->poll_interval.duration.interval;
-		break;
-	case STK_DURATION_TYPE_SECOND_TENTHS:
-		seconds = (4 + cmd->poll_interval.duration.interval) / 10;
-		if (seconds < 1)
-			seconds = 1;
-		break;
-	default:
+	if (!cmd->poll_interval.duration.interval) {
 		rsp->result.type = STK_RESULT_TYPE_DATA_NOT_UNDERSTOOD;
 		return TRUE;
 	}
+
+	seconds = MAX(duration_to_msecs(&cmd->poll_interval.duration) / 1000,
+			1);
 
 	ofono_modem_set_integer(modem, "status-poll-interval", seconds);
 
@@ -1032,6 +1085,7 @@ static gboolean handle_command_poll_interval(const struct stk_command *cmd,
 	return TRUE;
 }
 
+/* Note: may be called from ofono_stk_proactive_command_handled_notify */
 static gboolean handle_command_set_up_menu(const struct stk_command *cmd,
 						struct stk_response *rsp,
 						struct ofono_stk *stk)
@@ -1219,17 +1273,8 @@ static gboolean handle_command_display_text(const struct stk_command *cmd,
 		return TRUE;
 	}
 
-	if (dt->duration.interval) {
-		timeout = dt->duration.interval;
-		switch (dt->duration.unit) {
-		case STK_DURATION_TYPE_MINUTES:
-			timeout *= 60;
-		case STK_DURATION_TYPE_SECONDS:
-			timeout *= 10;
-		case STK_DURATION_TYPE_SECOND_TENTHS:
-			timeout *= 100;
-		}
-	}
+	if (dt->duration.interval)
+		timeout = duration_to_msecs(&dt->duration);
 
 	err = stk_agent_display_text(stk->current_agent, text, &dt->icon_id,
 					priority, display_text_cb, stk,
@@ -1387,17 +1432,8 @@ static gboolean handle_command_get_inkey(const struct stk_command *cmd,
 		return TRUE;
 	}
 
-	if (gi->duration.interval) {
-		timeout = gi->duration.interval;
-		switch (gi->duration.unit) {
-		case STK_DURATION_TYPE_MINUTES:
-			timeout *= 60;
-		case STK_DURATION_TYPE_SECONDS:
-			timeout *= 10;
-		case STK_DURATION_TYPE_SECOND_TENTHS:
-			timeout *= 100;
-		}
-	}
+	if (gi->duration.interval)
+		timeout = duration_to_msecs(&gi->duration);
 
 	gettimeofday(&stk->get_inkey_start_ts, NULL);
 
@@ -2090,6 +2126,132 @@ static gboolean handle_command_send_dtmf(const struct stk_command *cmd,
 	return FALSE;
 }
 
+static void play_tone_cb(enum stk_agent_result result, void *user_data)
+{
+	struct ofono_stk *stk = user_data;
+
+	stk->respond_on_exit = FALSE;
+
+	switch (result) {
+	case STK_AGENT_RESULT_OK:
+	case STK_AGENT_RESULT_TIMEOUT:
+		send_simple_response(stk, STK_RESULT_TYPE_SUCCESS);
+		break;
+
+	default:
+		send_simple_response(stk, STK_RESULT_TYPE_USER_TERMINATED);
+		break;
+	}
+}
+
+static gboolean handle_command_play_tone(const struct stk_command *cmd,
+						struct stk_response *rsp,
+						struct ofono_stk *stk)
+{
+	static int manufacturer_timeout = 10000; /* 10 seconds */
+	static const struct {
+		const char *name;
+		/* Continuous true/false according to 02.40 */
+		gboolean continuous;
+	} tone_infos[] = {
+		/* Default */
+		[0x00] = { "general-beep", FALSE },
+
+		/* Standard */
+		[0x01] = { "dial-tone", TRUE },
+		[0x02] = { "busy", TRUE },
+		[0x03] = { "congestion", TRUE },
+		[0x04] = { "radio-path-acknowledge", FALSE },
+		[0x05] = { "radio-path-not-available", FALSE },
+		[0x06] = { "error", TRUE },
+		[0x07] = { "call-waiting", FALSE },
+		[0x08] = { "ringing-tone", TRUE },
+
+		/* Proprietary */
+		[0x10] = { "general-beep", FALSE },
+		[0x11] = { "positive-acknowledgement", FALSE },
+		[0x12] = { "negative-acknowledgement", FALSE },
+		[0x13] = { "user-ringing-tone", TRUE },
+		[0x14] = { "user-sms-alert", FALSE },
+		[0x15] = { "critical", FALSE },
+		[0x20] = { "vibrate", TRUE },
+
+		/* Themed */
+		[0x30] = { "happy", FALSE },
+		[0x31] = { "sad", FALSE },
+		[0x32] = { "urgent-action", FALSE },
+		[0x33] = { "question", FALSE },
+		[0x34] = { "message-received", FALSE },
+
+		/* Melody */
+		[0x40] = { "melody-1", FALSE },
+		[0x41] = { "melody-2", FALSE },
+		[0x42] = { "melody-3", FALSE },
+		[0x43] = { "melody-4", FALSE },
+		[0x44] = { "melody-5", FALSE },
+		[0x45] = { "melody-6", FALSE },
+		[0x46] = { "melody-7", FALSE },
+		[0x47] = { "melody-8", FALSE },
+	};
+
+	const struct stk_command_play_tone *pt = &cmd->play_tone;
+	uint8_t qualifier = stk->pending_cmd->qualifier;
+	gboolean vibrate = (qualifier & (1 << 0)) != 0;
+	char *text;
+	int timeout;
+	int err;
+
+	if (pt->tone > sizeof(tone_infos) / sizeof(*tone_infos) ||
+			!tone_infos[pt->tone].name) {
+		rsp->result.type = STK_RESULT_TYPE_DATA_NOT_UNDERSTOOD;
+
+		return TRUE;
+	}
+
+	text = dbus_apply_text_attributes(pt->alpha_id ? pt->alpha_id : "",
+						&pt->text_attr);
+	if (!text) {
+		rsp->result.type = STK_RESULT_TYPE_DATA_NOT_UNDERSTOOD;
+
+		return TRUE;
+	}
+
+	if (pt->duration.interval)
+		timeout = duration_to_msecs(&pt->duration);
+	else
+		timeout = manufacturer_timeout;
+
+	if (!tone_infos[pt->tone].continuous)
+		/* Duration ignored */
+		err = stk_agent_play_tone(stk->current_agent, text,
+						&pt->icon_id, vibrate,
+						tone_infos[pt->tone].name,
+						play_tone_cb, stk, NULL,
+						stk->timeout * 1000);
+	else
+		err = stk_agent_loop_tone(stk->current_agent, text,
+						&pt->icon_id, vibrate,
+						tone_infos[pt->tone].name,
+						play_tone_cb, stk, NULL,
+						timeout);
+
+	g_free(text);
+
+	if (err < 0) {
+		/*
+		 * We most likely got an out of memory error, tell SIM
+		 * to retry
+		 */
+		rsp->result.type = STK_RESULT_TYPE_TERMINAL_BUSY;
+		return TRUE;
+	}
+
+	stk->respond_on_exit = TRUE;
+	stk->cancel_cmd = stk_request_cancel;
+
+	return FALSE;
+}
+
 static void stk_proactive_command_cancel(struct ofono_stk *stk)
 {
 	if (stk->immediate_response)
@@ -2267,6 +2429,11 @@ void ofono_stk_proactive_command_notify(struct ofono_stk *stk,
 							&rsp, stk);
 		break;
 
+	case STK_COMMAND_TYPE_PLAY_TONE:
+		respond = handle_command_play_tone(stk->pending_cmd,
+							&rsp, stk);
+		break;
+
 	default:
 		rsp.result.type = STK_RESULT_TYPE_COMMAND_NOT_UNDERSTOOD;
 		break;
@@ -2285,6 +2452,18 @@ void ofono_stk_proactive_command_handled_notify(struct ofono_stk *stk,
 						const unsigned char *pdu)
 {
 	struct stk_command *cmd;
+	struct stk_response dummyrsp;
+
+	/*
+	 * Modems send us the proactive command details and terminal responses
+	 * sent by the modem as a response to the command.  Terminal responses
+	 * start with the Command Details CTLV tag (0x81).  We filter terminal
+	 * responses here
+	 */
+	if (length > 0 && pdu[0] == 0x81) {
+		stk_alpha_id_unset(stk);
+		return;
+	}
 
 	stk_proactive_command_cancel(stk);
 
@@ -2309,16 +2488,38 @@ void ofono_stk_proactive_command_handled_notify(struct ofono_stk *stk,
 				&cmd->send_sms.text_attr,
 				&cmd->send_sms.icon_id);
 		break;
+
+	case STK_COMMAND_TYPE_SETUP_IDLE_MODE_TEXT:
+		handle_command_set_idle_text(cmd, &dummyrsp, stk);
+		break;
+
+	case STK_COMMAND_TYPE_SETUP_MENU:
+		handle_command_set_up_menu(cmd, &dummyrsp, stk);
+		break;
+
+	case STK_COMMAND_TYPE_SETUP_CALL:
+		/* TODO */
+		break;
+
+	case STK_COMMAND_TYPE_SEND_USSD:
+		stk_alpha_id_set(stk, cmd->send_ussd.alpha_id,
+				&cmd->send_ussd.text_attr,
+				&cmd->send_ussd.icon_id);
+		break;
+
+	case STK_COMMAND_TYPE_SEND_SS:
+		stk_alpha_id_set(stk, cmd->send_ss.alpha_id,
+				&cmd->send_ss.text_attr,
+				&cmd->send_ss.icon_id);
+
+	case STK_COMMAND_TYPE_SEND_DTMF:
+		stk_alpha_id_set(stk, cmd->send_dtmf.alpha_id,
+				&cmd->send_dtmf.text_attr,
+				&cmd->send_dtmf.icon_id);
+		break;
 	}
 
 	stk_command_free(cmd);
-}
-
-void ofono_stk_terminal_response_sent_notify(struct ofono_stk *stk,
-						int length,
-						const unsigned char *pdu)
-{
-	stk_alpha_id_unset(stk);
 }
 
 int ofono_stk_driver_register(const struct ofono_stk_driver *d)
@@ -2328,7 +2529,7 @@ int ofono_stk_driver_register(const struct ofono_stk_driver *d)
 	if (d->probe == NULL)
 		return -EINVAL;
 
-	g_drivers = g_slist_prepend(g_drivers, (void *)d);
+	g_drivers = g_slist_prepend(g_drivers, (void *) d);
 
 	return 0;
 }
@@ -2337,7 +2538,7 @@ void ofono_stk_driver_unregister(const struct ofono_stk_driver *d)
 {
 	DBG("driver: %p, name: %s", d, d->name);
 
-	g_drivers = g_slist_remove(g_drivers, (void *)d);
+	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void stk_unregister(struct ofono_atom *atom)

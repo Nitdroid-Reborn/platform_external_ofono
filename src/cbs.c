@@ -173,6 +173,7 @@ static void cbs_dispatch_text(struct ofono_cbs *cbs, enum sms_class cls,
 void ofono_cbs_notify(struct ofono_cbs *cbs, const unsigned char *pdu,
 				int pdu_len)
 {
+	struct ofono_modem *modem = __ofono_atom_get_modem(cbs->atom);
 	struct cbs c;
 	enum sms_class cls;
 	gboolean udhi;
@@ -191,8 +192,21 @@ void ofono_cbs_notify(struct ofono_cbs *cbs, const unsigned char *pdu,
 	}
 
 	if (cbs_topic_in_range(c.message_identifier, cbs->efcbmid_contents)) {
+		struct ofono_atom *sim_atom;
+
+		sim_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_SIM);
+		if (!sim_atom)
+			return;
+
+		if (!__ofono_sim_service_available(
+					__ofono_atom_get_data(sim_atom),
+					SIM_UST_SERVICE_DATA_DOWNLOAD_SMS_CB,
+					SIM_SST_SERVICE_DATA_DOWNLOAD_SMS_CB))
+			return;
+
 		if (cbs->stk)
 			__ofono_cbs_sim_download(cbs->stk, &c);
+
 		return;
 	}
 
@@ -551,7 +565,7 @@ int ofono_cbs_driver_register(const struct ofono_cbs_driver *d)
 	if (d->probe == NULL)
 		return -EINVAL;
 
-	g_drivers = g_slist_prepend(g_drivers, (void *)d);
+	g_drivers = g_slist_prepend(g_drivers, (void *) d);
 
 	return 0;
 }
@@ -560,7 +574,7 @@ void ofono_cbs_driver_unregister(const struct ofono_cbs_driver *d)
 {
 	DBG("driver: %p, name: %s", d, d->name);
 
-	g_drivers = g_slist_remove(g_drivers, (void *)d);
+	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void cbs_unregister(struct ofono_atom *atom)
@@ -574,20 +588,20 @@ static void cbs_unregister(struct ofono_atom *atom)
 	ofono_modem_remove_interface(modem, OFONO_CELL_BROADCAST_INTERFACE);
 
 	if (cbs->topics) {
-		g_slist_foreach(cbs->topics, (GFunc)g_free, NULL);
+		g_slist_foreach(cbs->topics, (GFunc) g_free, NULL);
 		g_slist_free(cbs->topics);
 		cbs->topics = NULL;
 	}
 
 	if (cbs->new_topics) {
-		g_slist_foreach(cbs->new_topics, (GFunc)g_free, NULL);
+		g_slist_foreach(cbs->new_topics, (GFunc) g_free, NULL);
 		g_slist_free(cbs->new_topics);
 		cbs->new_topics = NULL;
 	}
 
 	if (cbs->efcbmid_length) {
 		cbs->efcbmid_length = 0;
-		g_slist_foreach(cbs->efcbmid_contents, (GFunc)g_free, NULL);
+		g_slist_foreach(cbs->efcbmid_contents, (GFunc) g_free, NULL);
 		g_slist_free(cbs->efcbmid_contents);
 		cbs->efcbmid_contents = NULL;
 	}

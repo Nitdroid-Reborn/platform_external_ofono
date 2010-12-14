@@ -33,7 +33,7 @@
 #include "ofono.h"
 #include "common.h"
 
-#define RADIO_SETTINGS_MODE_CACHED 0x1
+#define RADIO_SETTINGS_FLAG_CACHED 0x1
 
 static GSList *g_drivers = NULL;
 
@@ -42,6 +42,8 @@ struct ofono_radio_settings {
 	int flags;
 	enum ofono_radio_access_mode mode;
 	enum ofono_radio_access_mode pending_mode;
+	ofono_bool_t fast_dormancy;
+	ofono_bool_t fast_dormancy_pending;
 	const struct ofono_radio_settings_driver *driver;
 	void *driver_data;
 	struct ofono_atom *atom;
@@ -106,9 +108,55 @@ static DBusMessage *radio_get_properties_reply(DBusMessage *msg,
 	ofono_dbus_dict_append(&dict, "TechnologyPreference",
 					DBUS_TYPE_STRING, &mode);
 
+	if (rs->driver->query_fast_dormancy) {
+		dbus_bool_t value = rs->fast_dormancy;
+		ofono_dbus_dict_append(&dict, "FastDormancy",
+					DBUS_TYPE_BOOLEAN, &value);
+	}
+
 	dbus_message_iter_close_container(&iter, &dict);
 
 	return reply;
+}
+
+static void radio_set_fast_dormancy(struct ofono_radio_settings *rs,
+					ofono_bool_t enable)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+	const char *path = __ofono_atom_get_path(rs->atom);
+	dbus_bool_t value = enable;
+
+	if (rs->fast_dormancy == enable)
+		return;
+
+	ofono_dbus_signal_property_changed(conn, path,
+						OFONO_RADIO_SETTINGS_INTERFACE,
+						"FastDormancy",
+						DBUS_TYPE_BOOLEAN, &value);
+	rs->fast_dormancy = enable;
+}
+
+static void radio_fast_dormancy_set_callback(const struct ofono_error *error,
+						void *data)
+{
+	struct ofono_radio_settings *rs = data;
+	DBusMessage *reply;
+
+	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
+		DBG("Error setting fast dormancy");
+
+		rs->fast_dormancy_pending = rs->fast_dormancy;
+
+		reply = __ofono_error_failed(rs->pending);
+		__ofono_dbus_pending_reply(&rs->pending, reply);
+
+		return;
+	}
+
+	reply = dbus_message_new_method_return(rs->pending);
+	__ofono_dbus_pending_reply(&rs->pending, reply);
+
+	radio_set_fast_dormancy(rs, rs->fast_dormancy_pending);
 }
 
 static void radio_set_rat_mode(struct ofono_radio_settings *rs,
@@ -122,7 +170,6 @@ static void radio_set_rat_mode(struct ofono_radio_settings *rs,
 		return;
 
 	rs->mode = mode;
-	rs->flags |= RADIO_SETTINGS_MODE_CACHED;
 
 	path = __ofono_atom_get_path(rs->atom);
 	str_mode = radio_access_mode_to_string(rs->mode);
@@ -140,9 +187,12 @@ static void radio_mode_set_callback(const struct ofono_error *error, void *data)
 
 	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
 		DBG("Error setting radio access mode");
+
 		rs->pending_mode = rs->mode;
+
 		reply = __ofono_error_failed(rs->pending);
 		__ofono_dbus_pending_reply(&rs->pending, reply);
+
 		return;
 	}
 
@@ -150,6 +200,46 @@ static void radio_mode_set_callback(const struct ofono_error *error, void *data)
 	__ofono_dbus_pending_reply(&rs->pending, reply);
 
 	radio_set_rat_mode(rs, rs->pending_mode);
+}
+
+static void radio_send_properties_reply(struct ofono_radio_settings *rs)
+{
+	DBusMessage *reply;
+
+	rs->flags |= RADIO_SETTINGS_FLAG_CACHED;
+
+	reply = radio_get_properties_reply(rs->pending, rs);
+	__ofono_dbus_pending_reply(&rs->pending, reply);
+}
+
+static void radio_fast_dormancy_query_callback(const struct ofono_error *error,
+						ofono_bool_t enable, void *data)
+{
+	struct ofono_radio_settings *rs = data;
+	DBusMessage *reply;
+
+	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
+		DBG("Error during fast dormancy query");
+
+		reply = __ofono_error_failed(rs->pending);
+		__ofono_dbus_pending_reply(&rs->pending, reply);
+
+		return;
+	}
+
+	radio_set_fast_dormancy(rs, enable);
+	radio_send_properties_reply(rs);
+}
+
+static void radio_query_fast_dormancy(struct ofono_radio_settings *rs)
+{
+	if (!rs->driver->query_fast_dormancy) {
+		radio_send_properties_reply(rs);
+		return;
+	}
+
+	rs->driver->query_fast_dormancy(rs, radio_fast_dormancy_query_callback,
+					rs);
 }
 
 static void radio_rat_mode_query_callback(const struct ofono_error *error,
@@ -161,15 +251,15 @@ static void radio_rat_mode_query_callback(const struct ofono_error *error,
 
 	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
 		DBG("Error during radio access mode query");
+
 		reply = __ofono_error_failed(rs->pending);
 		__ofono_dbus_pending_reply(&rs->pending, reply);
+
 		return;
 	}
 
 	radio_set_rat_mode(rs, mode);
-
-	reply = radio_get_properties_reply(rs->pending, rs);
-	__ofono_dbus_pending_reply(&rs->pending, reply);
+	radio_query_fast_dormancy(rs);
 }
 
 static DBusMessage *radio_get_properties(DBusConnection *conn,
@@ -177,7 +267,7 @@ static DBusMessage *radio_get_properties(DBusConnection *conn,
 {
 	struct ofono_radio_settings *rs = data;
 
-	if (rs->flags & RADIO_SETTINGS_MODE_CACHED)
+	if (rs->flags & RADIO_SETTINGS_FLAG_CACHED)
 		return radio_get_properties_reply(msg, rs);
 
 	if (!rs->driver->query_rat_mode)
@@ -240,6 +330,28 @@ static DBusMessage *radio_set_property(DBusConnection *conn, DBusMessage *msg,
 		rs->driver->set_rat_mode(rs, mode, radio_mode_set_callback, rs);
 
 		return NULL;
+	} else if (g_strcmp0(property, "FastDormancy") == 0) {
+		dbus_bool_t value;
+		int target;
+
+		if (!rs->driver->set_fast_dormancy)
+			return __ofono_error_not_implemented(msg);
+
+		if (dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_BOOLEAN)
+			return __ofono_error_invalid_args(msg);
+
+		dbus_message_iter_get_basic(&var, &value);
+		target = value;
+
+		if (rs->fast_dormancy_pending == target)
+			return dbus_message_new_method_return(msg);
+
+		rs->pending = dbus_message_ref(msg);
+		rs->fast_dormancy_pending = target;
+
+		rs->driver->set_fast_dormancy(rs, target,
+					radio_fast_dormancy_set_callback, rs);
+		return NULL;
 	}
 
 	return __ofono_error_invalid_args(msg);
@@ -265,7 +377,7 @@ int ofono_radio_settings_driver_register(const struct ofono_radio_settings_drive
 	if (!d || !d->probe)
 		return -EINVAL;
 
-	g_drivers = g_slist_prepend(g_drivers, (void *)d);
+	g_drivers = g_slist_prepend(g_drivers, (void *) d);
 
 	return 0;
 }
@@ -277,7 +389,7 @@ void ofono_radio_settings_driver_unregister(const struct ofono_radio_settings_dr
 	if (!d)
 		return;
 
-	g_drivers = g_slist_remove(g_drivers, (void *)d);
+	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void radio_settings_unregister(struct ofono_atom *atom)

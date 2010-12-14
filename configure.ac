@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(ofono, 0.33)
+AC_INIT(ofono, 0.36)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AM_CONFIG_HEADER(config.h)
@@ -67,8 +67,8 @@ AC_CHECK_LIB(c, signalfd, dummy=yes,
 AC_CHECK_LIB(dl, dlopen, dummy=yes,
 			AC_MSG_ERROR(dynamic linking loader is required))
 
-PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.16, dummy=yes,
-				AC_MSG_ERROR(GLib >= 2.16 is required))
+PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.22, dummy=yes,
+				AC_MSG_ERROR(GLib >= 2.22 is required))
 AC_SUBST(GLIB_CFLAGS)
 AC_SUBST(GLIB_LIBS)
 
@@ -153,15 +153,21 @@ AC_SUBST(UDEV_CFLAGS)
 AC_SUBST(UDEV_LIBS)
 AM_CONDITIONAL(UDEV, test "${enable_udev}" = "yes")
 
-AC_ARG_ENABLE(isimodem, AC_HELP_STRING([--disable-isimodem],
-				[disable PhoNet/ISI modem support]),
-					[enable_isimodem=${enableval}])
-AM_CONDITIONAL(ISIMODEM, test "${enable_isimodem}" != "no")
-
 AC_ARG_ENABLE(atmodem, AC_HELP_STRING([--disable-atmodem],
 				[disable ETSI AT modem support]),
 					[enable_atmodem=${enableval}])
 AM_CONDITIONAL(ATMODEM, test "${enable_atmodem}" != "no")
+
+AC_ARG_ENABLE(phonesim, AC_HELP_STRING([--disable-phonesim],
+				[disable Phone simulator support]),
+					[enable_phonesim=${enableval}])
+AM_CONDITIONAL(PHONESIM, test "${enable_phonesim}" != "no" &&
+					test "${enable_atmodem}" != "no")
+
+AC_ARG_ENABLE(isimodem, AC_HELP_STRING([--disable-isimodem],
+				[disable PhoNet/ISI modem support]),
+					[enable_isimodem=${enableval}])
+AM_CONDITIONAL(ISIMODEM, test "${enable_isimodem}" != "no")
 
 AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--disable-datafiles],
 			[don't install configuration and data files]),

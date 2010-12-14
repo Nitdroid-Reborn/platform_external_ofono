@@ -1,4 +1,4 @@
-Background
+pBackground
 ==========
 
 - Priority scale: High, Medium and Low
@@ -31,38 +31,6 @@ SMS
   Priority: Low
   Complexity: C8
 
-- Source / Destination port addressing scheme from 3GPP 23.040.  A special
-  header is used to indicate the source / destination port of the application
-  this SMS message belongs to.  Such messages which are encoded in 8-bit should
-  be decoded by oFono automatically.  The handler associated with this source /
-  destination port is called with the decoded stream.
-
-  Proposed solution involves a registration / callback framework in the SMS
-  atom for plugins to register handlers.  Default (wildcard) handler is also
-  desired.
-
-  Priority: High
-  Complexity: C2
-  Owner: Aki Niemi <aki.niemi@nokia.com>
-
-- Smart Messaging Service.  This is a separate standard from Nokia and uses
-  the 3GPP 23.040 source / destination addressing scheme.  The main aim of
-  this task is to support vCards and vCalendar objects over SMS.
-
-  Proposed solution is to add a plugin with an extension API to send / receive
-  such messages.
-
-  Priority: Medium
-  Complexity: C2
-  Depends: Source / Destination port scheme
-
-- WAP PUSH notification support for MMS.  oFono should be able to receive
-  WAP PUSH messages over SMS, parse them and report them to the upper level
-  MMS stack.
-
-  Priority: Low
-  Complexity: C8
-
 - See / Cancel pending SMS messages over DBus.  When oFono sends SMS messages
   the method call is only returned when the message has been submitted to the
   network.  Instead we should return an object path and allow cancellation of
@@ -70,6 +38,7 @@ SMS
 
   Priority: High
   Complexity: C2
+  Owner: Yang Gu <yang.gu@intel.com>
 
 - Persist outgoing SMS messages.  Currently oFono persists incoming messages
   that are fragmented.  However oFono does not persist queued outgoing
@@ -107,23 +76,30 @@ SMS
   Complexity: C4
   Owner: Rajesh Kadhiravan Nagaiah <Rajesh.Nagaiah@elektrobit.com>
 
-SIM / SIM File system
-=====================
-
-- Barred Dialing numbers support.  BDN will not be supported by oFono.
-  If BDN service enabled SIM is used, oFono will go into emergency mode.
+- Asynchronously acknowledge SMS DELIVER messages sent by the SMS driver
+  to core using ofono_sms_deliver_notify().  This may require the struct
+  ofono_sms_driver to be extended with one more function pointer like:
+    void (*deliver_ack)(unsigned char *pdu, int len, cb_t cb, void *data)
+  because currently messages are automatically acknowledged by either the
+  modem (this is the case of some AT modems) or the driver right after
+  ofono_sms_deliver_notify() and a failure to deliver at an upper level is
+  ignored.  The PDU can be an RP-ACK or RP-ERROR message with optional
+  TP-User-Content element, for example if returned from USIM Data Download.
 
   Priority: Low
   Complexity: C2
-  Owner: Jeevaka Badrappan <jeevaka.badrappan@elektrobit.com>
+
+SIM / SIM File system
+=====================
 
 - Read / Write EFcfis.  Call forwarding settings can be bootstrapped on the
   SIM for faster notification of the user that call forwarding is active.
   These settings are stored in EFcfis.  oFono should read these settings and
-  update the call history atom appropriately.
+  update the call forwarding atom appropriately.
 
   Priority: Low
   Complexity: C2
+  Owner: Jeevaka Badrappan <jeevaka.badrappan@elektrobit.com>
 
 - SIM Call History plugin.  New UICCs support four new SIM elementary files
   for storing call history information on the SIM: EFici, EFict, EFoci, EFoct.
@@ -157,6 +133,12 @@ SIM / SIM File system
   Complexity: C2
   Owner: Pekka Pessi <pekka.pessi@nokia.com>
 
+- Check SIM pin status if sim_change_pin fails. If it is anything other than
+  READY, we must tear the state back to pre_sim state and set the modem offline.
+
+  Priority: Medium
+  Complexity: C1
+  Owner: Marit Henriksen <marit.henriksen@stericsson.com>
 
 Modem Emulator
 ==============
@@ -226,13 +208,6 @@ GPRS
 
   Priority: Low
   Complexity: C4
-
-- On-demand SOCKS5 proxy support for MMS contexts.  When an MMS context type
-  is created, oFono should create a SOCKS5 proxy.  When a client connects to
-  the proxy, oFono can activate the GPRS context on-demand.
-
-  Priority: High
-  Complexity: C2
 
 - Add support for IPv6 GPRS contexts.
 
@@ -333,14 +308,6 @@ Voicecall
 Sim Toolkit
 ===========
 
-- Support the Play Tone proactive command.  This should be implemented
-  by making the appropriate call into the SimToolkitAgent.  The sound
-  that will be played will be determined by the agent based on the sound
-  type.
-
-  Priority: High
-  Complexity: C2
-
 - Support Refresh proactive command.  The specification defines 7 types
   of Refresh types:
 	- NAA Initialization
@@ -382,18 +349,6 @@ Sim Toolkit
   Complexity: C2
   Owner: Andrzej Zaborowski <andrew.zaborowski@intel.com>
 
-- Support Send SS proactive command.
-
-  Priority: High
-  Complexity: C4
-  Owner: Yang Gu <yang.gu@intel.com>
-
-- Support Send USSD proactive command.
-
-  Priority: High
-  Complexity: C4
-  Owner: Yang Gu <yang.gu@intel.com>
-
 - Support Set Up Call proactive command.  If the UICC has indicated that
   the user should be informed, then the SimToolkitAgent will be called
   in order to request user's confirmation of the call setup.  If the user
@@ -403,20 +358,21 @@ Sim Toolkit
   Priority: High
   Complexity: C8
 
-- Support 'SMS-PP' Download Envelope.  Whenever a special type of SMS is
-  received indicating that this is an SMS-PP Download message, this message
-  will be sent to the SIM via an SMS-PP Download Envelope.  No user interaction
-  will be required.  If the modem hardware supports this transparently, then
-  no indication to oFono will be necessary.
-
-  Priority: High
-  Complexity: C2
-
 - Support Language Notification proactive command.
 
   Priority: Medium
   Complexity: C1
   Owner: Jeevaka Badrappan <jeevaka.badrappan@elektrobit.com>
+
+- Support Provide Local Information.  Whenever oFono receives a Provide Local
+  Information proactive command, it should check the type of the information
+  requested.  If the information is about the time/date or the language of the
+  terminal, it should respond to the command with the appropriate terminal
+  response.  Otherwise, it will respond with an error.
+
+  Priority: High
+  Complexity: C2
+  Owner: Yang Gu <yang.gu@intel.com>
 
 
 Emergency Calls
@@ -466,7 +422,7 @@ Emergency Calls
 
   Priority: High
   Complexity: C1
-
+  Owner: John Mathew <john.mathew@elektrobit.com>
 
 Miscellaneous
 =============
@@ -481,6 +437,7 @@ Miscellaneous
 
 - Frequency Band Selection.  Add frequency band selection capability to the
   RadioSettings atom.
+  Owner: Lucas De Marchi <lucas.demarchi@profusion.mobi>
 
   This feature is not discussed in 27.007, thus manufacturer specific commands
   are required.
@@ -507,6 +464,7 @@ Miscellaneous
 
   Priority: Medium
   Complexity: C2
+  Owner: Gustavo F Padovan <padovan@profusion.mobi>
 
 - Add support for Modem 'power down & lock' and 'unlock & power up'.  When the
   'power down & lock' is given, the calling application is noted and all
@@ -518,26 +476,7 @@ Miscellaneous
 
   Priority: Medium
   Complexity: C2
-
-- Add a property for Fast Dormancy in the RadioSettings atom. This property
-  will enable or disable Fast Dormancy. Fast Dormancy refers to UE initiated
-  release of radio resources quickly after a burst of data transfer has ended.
-  Normally, radio resources are released by the network after a timeout
-  configured by the network operator. Fast Dormancy allows the modem to release
-  radio resources more quickly. Typically, fast dormancy would be enabled
-  if no data transfer is predicted to occur in the near future (e.g. end user
-  is not actively using the device). This is a major power-saving feature for
-  mobile devices, but can be ignored for USB sticks or PCI devices.
-
-  If the modem does not support such a feature the property should never be
-  exposed to the user.
-
-  This feature is not discussed in 27.007, thus manufacturer specific commands
-  are required.
-
-  Priority: High
-  Complexity: C1
-  Owner: Mika Liljeberg <mika.liljeberg@nokia.com>
+  Owner: Gustavo F Padovan <padovan@profusion.mobi>
 
 - TTY (hearing impaired) support.  Add a new oFono atom type that will enable
   the user to enable or disable the TTY support on the modem.  Support for
@@ -548,6 +487,7 @@ Miscellaneous
 
   Priority: High
   Complexity: C1
+  Owner: Lucas De Marchi <lucas.demarchi@profusion.mobi>
 
 - Add support for GPS power control atom.  Many modem manufacturers provide
   a GPS unit with their modem hardware.  This unit can be turned on or off
@@ -558,3 +498,11 @@ Miscellaneous
 
   Priority: Low
   Complexity: C4
+
+- Add Location Service API for providing basic E911 suport.
+  This will be based on the 27.007 defined AT commands using
+  XML for transport of positioning request and responses.
+
+  Priority: Medium
+  Complexity: C2
+  Owner: Sjur Brændeland <sjur.brandeland@stericsson.com>

@@ -709,7 +709,7 @@ static gboolean clir_ss_control(int type,
 
 	/* This is the temporary form of CLIR, handled in voicecalls */
 	if (!strlen(sia) && !strlen(sib) & !strlen(sic) &&
-		strlen(dn) && type != SS_CONTROL_TYPE_QUERY)
+			strlen(dn) && type != SS_CONTROL_TYPE_QUERY)
 		return FALSE;
 
 	if (strlen(sia) || strlen(sib) || strlen(sic) || strlen(dn)) {
@@ -719,8 +719,14 @@ static gboolean clir_ss_control(int type,
 		return TRUE;
 	}
 
-	if ((type == SS_CONTROL_TYPE_QUERY && !cs->driver->clir_query) ||
-		(type != SS_CONTROL_TYPE_QUERY && !cs->driver->clir_set)) {
+	if (type == SS_CONTROL_TYPE_QUERY && cs->driver->clir_query == NULL) {
+		DBusMessage *reply = __ofono_error_not_implemented(msg);
+		g_dbus_send_message(conn, reply);
+
+		return TRUE;
+	}
+
+	if (type != SS_CONTROL_TYPE_QUERY && !cs->driver->clir_set) {
 		DBusMessage *reply = __ofono_error_not_implemented(msg);
 		g_dbus_send_message(conn, reply);
 
@@ -734,7 +740,7 @@ static gboolean clir_ss_control(int type,
 	case SS_CONTROL_TYPE_REGISTRATION:
 	case SS_CONTROL_TYPE_ACTIVATION:
 		cs->ss_req_type = SS_CONTROL_TYPE_ACTIVATION;
-		cs->driver->clir_set(cs, OFONO_CLIR_OPTION_INVOCATION,
+		cs->driver->clir_set(cs, OFONO_CLIR_OPTION_SUPPRESSION,
 					clir_ss_set_callback, cs);
 		break;
 
@@ -746,7 +752,7 @@ static gboolean clir_ss_control(int type,
 	case SS_CONTROL_TYPE_DEACTIVATION:
 	case SS_CONTROL_TYPE_ERASURE:
 		cs->ss_req_type = SS_CONTROL_TYPE_DEACTIVATION;
-		cs->driver->clir_set(cs, OFONO_CLIR_OPTION_SUPPRESSION,
+		cs->driver->clir_set(cs, OFONO_CLIR_OPTION_INVOCATION,
 					clir_ss_set_callback, cs);
 		break;
 	};
@@ -1193,7 +1199,7 @@ int ofono_call_settings_driver_register(const struct ofono_call_settings_driver 
 	if (d->probe == NULL)
 		return -EINVAL;
 
-	g_drivers = g_slist_prepend(g_drivers, (void *)d);
+	g_drivers = g_slist_prepend(g_drivers, (void *) d);
 
 	return 0;
 }
@@ -1202,7 +1208,7 @@ void ofono_call_settings_driver_unregister(const struct ofono_call_settings_driv
 {
 	DBG("driver: %p, name: %s", d, d->name);
 
-	g_drivers = g_slist_remove(g_drivers, (void *)d);
+	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void call_settings_unregister(struct ofono_atom *atom)

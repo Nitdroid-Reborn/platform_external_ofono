@@ -106,7 +106,7 @@ static void at_csca_set(struct ofono_sms *sms,
 	struct cb_data *cbd = cb_data_new(cb, user_data);
 	char buf[64];
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CSCA=\"%s\",%d", sca->number, sca->type);
@@ -173,7 +173,7 @@ static void at_csca_query(struct ofono_sms *sms, ofono_sms_sca_query_cb_t cb,
 	struct sms_data *data = ofono_sms_get_data(sms);
 	struct cb_data *cbd = cb_data_new(cb, user_data);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (g_at_chat_send(data->chat, "AT+CSCA?", csca_prefix,
@@ -227,7 +227,7 @@ static void at_cmgs(struct ofono_sms *sms, unsigned char *pdu, int pdu_len,
 	char buf[512];
 	int len;
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (mms) {
@@ -267,7 +267,7 @@ static void at_cgsms_set(struct ofono_sms *sms, int bearer,
 	struct cb_data *cbd = cb_data_new(cb, user_data);
 	char buf[64];
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CGSMS=%d", bearer);
@@ -319,7 +319,7 @@ static void at_cgsms_query(struct ofono_sms *sms,
 	struct sms_data *data = ofono_sms_get_data(sms);
 	struct cb_data *cbd = cb_data_new(cb, user_data);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (g_at_chat_send(data->chat, "AT+CGSMS?", cgsms_prefix,
@@ -798,15 +798,20 @@ static gboolean build_cnmi_string(char *buf, int *cnmi_opts,
 
 	DBG("");
 
-	if (data->vendor == OFONO_VENDOR_QUALCOMM_MSM ||
-			data->vendor == OFONO_VENDOR_HUAWEI ||
-			data->vendor == OFONO_VENDOR_NOVATEL)
+	switch (data->vendor) {
+	case OFONO_VENDOR_GOBI:
+	case OFONO_VENDOR_QUALCOMM_MSM:
+	case OFONO_VENDOR_NOVATEL:
+	case OFONO_VENDOR_HUAWEI:
 		/* MSM devices advertise support for mode 2, but return an
 		 * error if we attempt to actually use it. */
 		mode = "1";
-	else
+		break;
+	default:
 		/* Sounds like 2 is the sanest mode */
 		mode = "2310";
+		break;
+	}
 
 	if (!append_cnmi_element(buf, &len, cnmi_opts[0], mode, FALSE))
 		return FALSE;
@@ -826,10 +831,14 @@ static gboolean build_cnmi_string(char *buf, int *cnmi_opts,
 	 * ack it with error "CNMA not expected."  However, not acking it
 	 * sends the device into la-la land.
 	 */
-	if (data->vendor == OFONO_VENDOR_NOVATEL)
+	switch (data->vendor) {
+	case OFONO_VENDOR_NOVATEL:
 		mode = "20";
-	else
+		break;
+	default:
 		mode = "120";
+		break;
+	}
 
 	/*
 	 * Try to deliver Status-Reports via +CDS, then CDSI or don't
@@ -866,8 +875,7 @@ static void construct_ack_pdu(struct sms_data *d)
 		goto err;
 
 	d->cnma_ack_pdu = encode_hex(pdu, tpdu_len, 0);
-
-	if (!d->cnma_ack_pdu)
+	if (d->cnma_ack_pdu == NULL)
 		goto err;
 
 	d->cnma_ack_pdu_len = tpdu_len;
@@ -917,11 +925,15 @@ static void at_cnmi_query_cb(gboolean ok, GAtResult *result, gpointer user_data)
 		supported = TRUE;
 
 	/* support for ack pdu is not working */
-	if (data->vendor == OFONO_VENDOR_IFX ||
-			data->vendor == OFONO_VENDOR_HUAWEI ||
-			data->vendor == OFONO_VENDOR_NOVATEL ||
-			data->vendor == OFONO_VENDOR_OPTION_HSO)
+	switch (data->vendor) {
+	case OFONO_VENDOR_IFX:
+	case OFONO_VENDOR_HUAWEI:
+	case OFONO_VENDOR_NOVATEL:
+	case OFONO_VENDOR_OPTION_HSO:
 		goto out;
+	default:
+		break;
+	}
 
 	if (data->cnma_enabled)
 		construct_ack_pdu(data);
@@ -1139,13 +1151,16 @@ static void at_csms_status_cb(gboolean ok, GAtResult *result,
 			goto out;
 
 
-		if (data->vendor == OFONO_VENDOR_HUAWEI ||
-				data->vendor == OFONO_VENDOR_NOVATEL) {
+		switch (data->vendor) {
+		case OFONO_VENDOR_HUAWEI:
+		case OFONO_VENDOR_NOVATEL:
 			g_at_result_iter_skip_next(&iter);
 			service = 0;
-		} else {
+			break;
+		default:
 			if (!g_at_result_iter_next_number(&iter, &service))
 				goto out;
+			break;
 		}
 
 		if (!g_at_result_iter_next_number(&iter, &mt))
@@ -1242,6 +1257,8 @@ static void at_sms_remove(struct ofono_sms *sms)
 
 	g_at_chat_unref(data->chat);
 	g_free(data);
+
+	ofono_sms_set_data(sms, NULL);
 }
 
 static struct ofono_sms_driver driver = {
@@ -1255,12 +1272,12 @@ static struct ofono_sms_driver driver = {
 	.bearer_set	= at_cgsms_set,
 };
 
-void at_sms_init()
+void at_sms_init(void)
 {
 	ofono_sms_driver_register(&driver);
 }
 
-void at_sms_exit()
+void at_sms_exit(void)
 {
 	ofono_sms_driver_unregister(&driver);
 }

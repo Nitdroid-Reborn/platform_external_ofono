@@ -39,6 +39,7 @@ unit/test-caif
 unit/test-stkutil
 
 tools/huawei-audio
+tools/auto-enable
 
 gatchat/gsmdial
 gatchat/test-server

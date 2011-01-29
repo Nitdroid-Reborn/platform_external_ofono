@@ -44,6 +44,8 @@
 #define EF_STATUS_INVALIDATED 0
 #define EF_STATUS_VALID 1
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+
 struct sim_data {
 	GAtChat *chat;
 	unsigned int vendor;
@@ -53,6 +55,8 @@ struct sim_data {
 static const char *crsm_prefix[] = { "+CRSM:", NULL };
 static const char *cpin_prefix[] = { "+CPIN:", NULL };
 static const char *clck_prefix[] = { "+CLCK:", NULL };
+static const char *huawei_cpin_prefix[] = { "^CPIN:", NULL };
+static const char *xpincnt_prefix[] = { "+XPINCNT:", NULL };
 static const char *none_prefix[] = { NULL };
 
 static void at_crsm_info_cb(gboolean ok, GAtResult *result, gpointer user_data)
@@ -138,13 +142,18 @@ static void at_sim_read_info(struct ofono_sim *sim, int fileid,
 	}
 
 	cbd = cb_data_new(cb, data);
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CRSM=192,%i", fileid);
 
-	if (sd->vendor == OFONO_VENDOR_QUALCOMM_MSM)
+	switch (sd->vendor) {
+	case OFONO_VENDOR_HUAWEI:
+	case OFONO_VENDOR_SIERRA:
+	case OFONO_VENDOR_QUALCOMM_MSM:
 		strcat(buf, ",0,0,255"); /* Maximum possible length */
+		break;
+	}
 
 	if (g_at_chat_send(sd->chat, buf, crsm_prefix,
 				at_crsm_info_cb, cbd, g_free) > 0)
@@ -211,7 +220,7 @@ static void at_sim_read_binary(struct ofono_sim *sim, int fileid,
 	struct cb_data *cbd = cb_data_new(cb, data);
 	char buf[64];
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CRSM=176,%i,%i,%i,%i", fileid,
@@ -235,7 +244,7 @@ static void at_sim_read_record(struct ofono_sim *sim, int fileid,
 	struct cb_data *cbd = cb_data_new(cb, data);
 	char buf[64];
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CRSM=178,%i,%i,4,%i", fileid,
@@ -300,7 +309,7 @@ static void at_sim_update_binary(struct ofono_sim *sim, int fileid,
 	char *buf = g_try_new(char, 36 + length * 2);
 	int len, ret;
 
-	if (!cbd || !buf)
+	if (cbd == NULL || buf == NULL)
 		goto error;
 
 	len = sprintf(buf, "AT+CRSM=214,%i,%i,%i,%i,", fileid,
@@ -333,7 +342,7 @@ static void at_sim_update_record(struct ofono_sim *sim, int fileid,
 	char *buf = g_try_new(char, 36 + length * 2);
 	int len, ret;
 
-	if (!cbd || !buf)
+	if (cbd == NULL || buf == NULL)
 		goto error;
 
 	len = sprintf(buf, "AT+CRSM=220,%i,%i,4,%i,", fileid,
@@ -365,7 +374,7 @@ static void at_sim_update_cyclic(struct ofono_sim *sim, int fileid,
 	char *buf = g_try_new(char, 36 + length * 2);
 	int len, ret;
 
-	if (!cbd || !buf)
+	if (cbd == NULL || buf == NULL)
 		goto error;
 
 	len = sprintf(buf, "AT+CRSM=220,%i,0,3,%i,", fileid, length);
@@ -421,7 +430,7 @@ static void at_read_imsi(struct ofono_sim *sim, ofono_sim_imsi_cb_t cb,
 	struct sim_data *sd = ofono_sim_get_data(sim);
 	struct cb_data *cbd = cb_data_new(cb, data);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (g_at_chat_send(sd->chat, "AT+CIMI", NULL,
@@ -455,6 +464,143 @@ static struct {
 	{ OFONO_SIM_PASSWORD_PHCORP_PIN,	"PH-CORP PIN"	},
 	{ OFONO_SIM_PASSWORD_PHCORP_PUK,	"PH-CORP PUK"	},
 };
+
+#define BUILD_PIN_RETRIES_ARRAY(passwd_types, passwd_types_cnt, retry)	\
+	for (i = 0; i < OFONO_SIM_PASSWORD_INVALID; i++)		\
+		retry[i] = -1;						\
+									\
+	for (i = 0; i < passwd_types_cnt; i++) {			\
+		int val;						\
+									\
+		if (!g_at_result_iter_next_number(&iter, &val))		\
+			goto error;					\
+									\
+		retry[passwd_types[i]] = val;				\
+									\
+		DBG("retry counter id=%d, val=%d", passwd_types[i],	\
+					retry[passwd_types[i]]);	\
+	}								\
+
+static void huawei_cpin_cb(gboolean ok, GAtResult *result, gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	ofono_sim_pin_retries_cb_t cb = cbd->cb;
+	const char *final = g_at_result_final_response(result);
+	GAtResultIter iter;
+	struct ofono_error error;
+	int retries[OFONO_SIM_PASSWORD_INVALID];
+	size_t i;
+	static enum ofono_sim_password_type password_types[] = {
+		OFONO_SIM_PASSWORD_SIM_PUK,
+		OFONO_SIM_PASSWORD_SIM_PIN,
+		OFONO_SIM_PASSWORD_SIM_PUK2,
+		OFONO_SIM_PASSWORD_SIM_PIN2,
+	};
+
+	decode_at_error(&error, final);
+
+	if (!ok) {
+		cb(&error, NULL, cbd->data);
+		return;
+	}
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "^CPIN:"))
+		goto error;
+
+	/* Skip status since we are not interested in this */
+	if (!g_at_result_iter_skip_next(&iter))
+		goto error;
+
+	/* Skip "overall counter" since we'll grab each one individually */
+	if (!g_at_result_iter_skip_next(&iter))
+		goto error;
+
+	BUILD_PIN_RETRIES_ARRAY(password_types, ARRAY_SIZE(password_types),
+				retries);
+
+	cb(&error, retries, cbd->data);
+
+	return;
+
+error:
+	CALLBACK_WITH_FAILURE(cb, NULL, cbd->data);
+}
+
+static void xpincnt_cb(gboolean ok, GAtResult *result, gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	ofono_sim_pin_retries_cb_t cb = cbd->cb;
+	const char *final = g_at_result_final_response(result);
+	GAtResultIter iter;
+	struct ofono_error error;
+	int retries[OFONO_SIM_PASSWORD_INVALID];
+	size_t i;
+	static enum ofono_sim_password_type password_types[] = {
+		OFONO_SIM_PASSWORD_SIM_PIN,
+		OFONO_SIM_PASSWORD_SIM_PIN2,
+		OFONO_SIM_PASSWORD_SIM_PUK,
+		OFONO_SIM_PASSWORD_SIM_PUK2,
+	};
+
+	decode_at_error(&error, final);
+
+	if (!ok) {
+		cb(&error, NULL, cbd->data);
+		return;
+	}
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+XPINCNT:"))
+		goto error;
+
+	BUILD_PIN_RETRIES_ARRAY(password_types, ARRAY_SIZE(password_types),
+				retries);
+
+	cb(&error, retries, cbd->data);
+
+	return;
+
+error:
+	CALLBACK_WITH_FAILURE(cb, NULL, cbd->data);
+}
+
+static void at_pin_retries_query(struct ofono_sim *sim,
+					ofono_sim_pin_retries_cb_t cb,
+					void *data)
+{
+	struct sim_data *sd = ofono_sim_get_data(sim);
+	struct cb_data *cbd = cb_data_new(cb, data);
+
+	DBG("");
+
+	if (cbd == NULL)
+		goto error;
+
+	switch (sd->vendor) {
+	case OFONO_VENDOR_IFX:
+		if (g_at_chat_send(sd->chat, "AT+XPINCNT", xpincnt_prefix,
+					xpincnt_cb, cbd, g_free) > 0)
+			return;
+
+		break;
+	case OFONO_VENDOR_HUAWEI:
+		if (g_at_chat_send(sd->chat, "AT^CPIN?", huawei_cpin_prefix,
+					huawei_cpin_cb, cbd, g_free) > 0)
+			return;
+
+		break;
+	default:
+		break;
+	}
+
+error:
+	g_free(cbd);
+
+	CALLBACK_WITH_FAILURE(cb, NULL, data);
+}
 
 static void at_cpin_cb(gboolean ok, GAtResult *result, gpointer user_data)
 {
@@ -517,7 +663,7 @@ static void at_pin_query(struct ofono_sim *sim, ofono_sim_passwd_cb_t cb,
 	struct sim_data *sd = ofono_sim_get_data(sim);
 	struct cb_data *cbd = cb_data_new(cb, data);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	cbd->user = sim;
@@ -626,7 +772,7 @@ static void at_pin_send(struct ofono_sim *sim, const char *passwd,
 	char buf[64];
 	int ret;
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	cbd->user = sd;
@@ -656,7 +802,7 @@ static void at_pin_send_puk(struct ofono_sim *sim, const char *puk,
 	char buf[64];
 	int ret;
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	cbd->user = sd;
@@ -711,10 +857,10 @@ static void at_pin_enable(struct ofono_sim *sim,
 	int ret;
 	unsigned int len = sizeof(at_clck_cpwd_fac) / sizeof(*at_clck_cpwd_fac);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
-	if (passwd_type >= len || !at_clck_cpwd_fac[passwd_type])
+	if (passwd_type >= len || at_clck_cpwd_fac[passwd_type] == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CLCK=\"%s\",%i,\"%s\"",
@@ -736,7 +882,7 @@ error:
 
 static void at_change_passwd(struct ofono_sim *sim,
 			enum ofono_sim_password_type passwd_type,
-			const char *old, const char *new,
+			const char *old_passwd, const char *new_passwd,
 			ofono_sim_lock_unlock_cb_t cb, void *data)
 {
 	struct sim_data *sd = ofono_sim_get_data(sim);
@@ -745,15 +891,15 @@ static void at_change_passwd(struct ofono_sim *sim,
 	int ret;
 	unsigned int len = sizeof(at_clck_cpwd_fac) / sizeof(*at_clck_cpwd_fac);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (passwd_type >= len ||
-			!at_clck_cpwd_fac[passwd_type])
+			at_clck_cpwd_fac[passwd_type] == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CPWD=\"%s\",\"%s\",\"%s\"",
-			at_clck_cpwd_fac[passwd_type], old, new);
+			at_clck_cpwd_fac[passwd_type], old_passwd, new_passwd);
 
 	ret = g_at_chat_send(sd->chat, buf, none_prefix,
 				at_lock_unlock_cb, cbd, g_free);
@@ -808,10 +954,10 @@ static void at_pin_query_enabled(struct ofono_sim *sim,
 	char buf[64];
 	unsigned int len = sizeof(at_clck_cpwd_fac) / sizeof(*at_clck_cpwd_fac);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
-	if (passwd_type >= len || !at_clck_cpwd_fac[passwd_type])
+	if (passwd_type >= len || at_clck_cpwd_fac[passwd_type] == NULL)
 		goto error;
 
 	snprintf(buf, sizeof(buf), "AT+CLCK=\"%s\",2",
@@ -886,6 +1032,7 @@ static struct ofono_sim_driver driver = {
 	.write_file_cyclic	= at_sim_update_cyclic,
 	.read_imsi		= at_read_imsi,
 	.query_passwd_state	= at_pin_query,
+	.query_pin_retries	= at_pin_retries_query,
 	.send_passwd		= at_pin_send,
 	.reset_passwd		= at_pin_send_puk,
 	.lock			= at_pin_enable,
@@ -893,12 +1040,12 @@ static struct ofono_sim_driver driver = {
 	.query_locked		= at_pin_query_enabled,
 };
 
-void at_sim_init()
+void at_sim_init(void)
 {
 	ofono_sim_driver_register(&driver);
 }
 
-void at_sim_exit()
+void at_sim_exit(void)
 {
 	ofono_sim_driver_unregister(&driver);
 }

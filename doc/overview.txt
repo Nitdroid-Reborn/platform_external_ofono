@@ -100,8 +100,8 @@ Current implemented features:
 
 		The SMS support for text messages is available.  oFono
 		supports concatenated messages of up to 255 segments, UCS2 and
-		GSM alphabets as well as extended alphabets.  SMS status
-		report features are not yet available.
+		GSM alphabets as well as extended alphabets.  Delivery
+		confirmations (Status Reports) are also supported.
 
 		Selection of SMS bearer settings is supported through the
 		'Bearer' property on the SmsManager interface.
@@ -119,9 +119,16 @@ Current implemented features:
 
 	GPRS
 
-		GPRS data connections are fully supported by oFono.  However
-		this support is currently limited to just one active GPRS
-		context (network interface).
+		GPRS data connections are fully supported by oFono.  Multiple
+		active GPRS contexts are supported, but IPv6 context support is
+		currently missing.
+
+	Radio Access Settings
+
+		The radio settings interface contains support for selecting
+		the access selection mode and used frequency bands, and allows
+		enabling and disabling fast dormancy on hardware that support
+		this feature.
 
 Work in progress features:
 

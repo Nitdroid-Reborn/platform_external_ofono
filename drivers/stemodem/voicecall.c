@@ -76,7 +76,7 @@ struct change_state_req {
 };
 
 /* Translate from the ECAV-based STE-status to CLCC based status */
-static int call_status_ste_to_ofono(int status)
+static int call_status_ste_to_ofono(enum call_status_ste status)
 {
 	switch (status) {
 	case STE_CALL_STATUS_IDLE:
@@ -95,9 +95,9 @@ static int call_status_ste_to_ofono(int status)
 		return CALL_STATUS_INCOMING;
 	case STE_CALL_STATUS_BUSY:
 		return CALL_STATUS_DISCONNECTED;
-	default:
-		return CALL_STATUS_DISCONNECTED;
 	}
+
+	return CALL_STATUS_DISCONNECTED;
 }
 
 static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
@@ -109,14 +109,14 @@ static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
 
 	/* Generate a call structure for the waiting call */
 	call = g_try_new0(struct ofono_call, 1);
-	if (!call)
+	if (call == NULL)
 		return NULL;
 
 	call->type = type;
 	call->direction = direction;
 	call->status = status;
 
-	if (clip != 2) {
+	if (clip != CLIP_VALIDITY_NOT_AVAILABLE) {
 		strncpy(call->phone_number.number, num,
 			OFONO_MAX_PHONE_NUMBER_LENGTH);
 		call->phone_number.type = num_type;
@@ -180,14 +180,14 @@ static void atd_cb(gboolean ok, GAtResult *result, gpointer user_data)
 
 static void ste_dial(struct ofono_voicecall *vc,
 			const struct ofono_phone_number *ph,
-			enum ofono_clir_option clir, enum ofono_cug_option cug,
-			ofono_voicecall_cb_t cb, void *data)
+			enum ofono_clir_option clir, ofono_voicecall_cb_t cb,
+			void *data)
 {
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 	struct cb_data *cbd = cb_data_new(cb, data);
 	char buf[256];
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	cbd->user = vc;
@@ -198,21 +198,13 @@ static void ste_dial(struct ofono_voicecall *vc,
 		snprintf(buf, sizeof(buf), "ATD%s", ph->number);
 
 	switch (clir) {
+	case OFONO_CLIR_OPTION_DEFAULT:
+		break;
 	case OFONO_CLIR_OPTION_INVOCATION:
 		strcat(buf, "I");
 		break;
 	case OFONO_CLIR_OPTION_SUPPRESSION:
 		strcat(buf, "i");
-		break;
-	default:
-		break;
-	}
-
-	switch (cug) {
-	case OFONO_CUG_OPTION_INVOCATION:
-		strcat(buf, "G");
-		break;
-	default:
 		break;
 	}
 
@@ -235,7 +227,7 @@ static void ste_template(const char *cmd, struct ofono_voicecall *vc,
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 	struct change_state_req *req = g_try_new0(struct change_state_req, 1);
 
-	if (!req)
+	if (req == NULL)
 		goto error;
 
 	req->vc = vc;
@@ -299,7 +291,7 @@ static void ste_release_specific(struct ofono_voicecall *vc, int id,
 	struct release_id_req *req = g_try_new0(struct release_id_req, 1);
 	char buf[32];
 
-	if (!req)
+	if (req == NULL)
 		goto error;
 
 	req->vc = vc;
@@ -375,17 +367,15 @@ static void ste_send_dtmf(struct ofono_voicecall *vc, const char *dtmf,
 {
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 	struct cb_data *cbd = cb_data_new(cb, data);
-	int len = strlen(dtmf);
 	int s;
 	char *buf;
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
-	/* strlen("AT+VTS=) = 7 */
-	buf = g_try_new(char, len + 7);
-
-	if (!buf)
+	/* strlen("AT+VTS=) = 7 + NULL */
+	buf = g_try_new(char, strlen(dtmf) + 8);
+	if (buf == NULL)
 		goto error;
 
 	sprintf(buf, "AT+VTS=%s", dtmf);
@@ -433,6 +423,9 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 	if (!g_at_result_iter_next_number(&iter, &call_type))
 		return;
 
+	if (call_type != BEARER_CLASS_VOICE)
+		return;
+
 	/* Skip process id and exit cause */
 	g_at_result_iter_skip_next(&iter);
 	g_at_result_iter_skip_next(&iter);
@@ -442,15 +435,17 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 	if (status == CALL_STATUS_DIALING ||
 			status == CALL_STATUS_WAITING ||
 			status == CALL_STATUS_INCOMING) {
-		if (!g_at_result_iter_next_string(&iter, &num))
-			return;
-
-		if (!g_at_result_iter_next_number(&iter, &num_type))
+		/*
+		 * If caller uses hidden id, the number and
+		 * number type might not be present. Don't
+		 * look for type if number is not present.
+		 */
+		if (!g_at_result_iter_next_string(&iter, &num)) {
+			num = "";
+			num_type = 128;
+		} else if (!g_at_result_iter_next_number(&iter, &num_type))
 			return;
 	}
-
-	if (call_type != BEARER_CLASS_VOICE)
-		return;
 
 	/*
 	 * Handle the call according to the status.
@@ -465,7 +460,7 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 	if (l == NULL && status != CALL_STATUS_DIALING &&
 				status != CALL_STATUS_WAITING &&
 				status != CALL_STATUS_INCOMING) {
-		ofono_error("ECAV notification for unknow call."
+		ofono_error("ECAV notification for unknown call."
 				" id: %d, status: %d", id, status);
 		return;
 	}
@@ -506,7 +501,7 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 
 		new_call = create_call(vc, call_type, direction, status,
 					num, num_type, clip_validity);
-		if (!new_call) {
+		if (new_call == NULL) {
 			ofono_error("Unable to malloc. "
 					"Call management is fubar");
 			return;
@@ -522,9 +517,6 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 	case CALL_STATUS_HELD:
 		existing_call->status = status;
 		ofono_voicecall_notify(vc, existing_call);
-		break;
-
-	default:
 		break;
 	}
 }
@@ -546,7 +538,7 @@ static int ste_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 	struct voicecall_data *vd;
 
 	vd = g_try_new0(struct voicecall_data, 1);
-	if (!vd)
+	if (vd == NULL)
 		return -ENOMEM;
 
 	vd->chat = g_at_chat_clone(chat);
@@ -592,12 +584,12 @@ static struct ofono_voicecall_driver driver = {
 	.send_tones		= ste_send_dtmf
 };
 
-void ste_voicecall_init()
+void ste_voicecall_init(void)
 {
 	ofono_voicecall_driver_register(&driver);
 }
 
-void ste_voicecall_exit()
+void ste_voicecall_exit(void)
 {
 	ofono_voicecall_driver_unregister(&driver);
 }

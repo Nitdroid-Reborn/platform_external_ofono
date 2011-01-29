@@ -74,8 +74,7 @@ static void at_cbm_notify(GAtResult *result, gpointer user_data)
 	}
 
 	hexpdu = g_at_result_pdu(result);
-
-	if (!hexpdu) {
+	if (hexpdu == NULL) {
 		ofono_error("Got a CBM, but no PDU.  Are we in text mode?");
 		return;
 	}
@@ -116,7 +115,7 @@ static void at_cbs_set_topics(struct ofono_cbs *cbs, const char *topics,
 
 	DBG("");
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	/* For the Qualcomm based devices it is required to clear
@@ -126,9 +125,15 @@ static void at_cbs_set_topics(struct ofono_cbs *cbs, const char *topics,
 	 * In addition only AT+CSCB=1 seems to work.  Providing
 	 * a topic range for clearing makes AT+CSBC=0,... fail.
 	 */
-	if (data->vendor == OFONO_VENDOR_QUALCOMM_MSM)
+	switch (data->vendor) {
+	case OFONO_VENDOR_GOBI:
+	case OFONO_VENDOR_QUALCOMM_MSM:
 		g_at_chat_send(data->chat, "AT+CSCB=1", none_prefix,
 				NULL, NULL, NULL);
+		break;
+	default:
+		break;
+	}
 
 	buf = g_strdup_printf("AT+CSCB=0,\"%s\"", topics);
 
@@ -155,7 +160,7 @@ static void at_cbs_clear_topics(struct ofono_cbs *cbs,
 
 	DBG("");
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (data->cscb_mode_1)
@@ -270,12 +275,12 @@ static struct ofono_cbs_driver driver = {
 	.clear_topics = at_cbs_clear_topics,
 };
 
-void at_cbs_init()
+void at_cbs_init(void)
 {
 	ofono_cbs_driver_register(&driver);
 }
 
-void at_cbs_exit()
+void at_cbs_exit(void)
 {
 	ofono_cbs_driver_unregister(&driver);
 }

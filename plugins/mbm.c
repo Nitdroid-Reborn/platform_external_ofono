@@ -77,7 +77,7 @@ static int mbm_probe(struct ofono_modem *modem)
 	DBG("%p", modem);
 
 	data = g_try_new0(struct mbm_data, 1);
-	if (!data)
+	if (data == NULL)
 		return -ENOMEM;
 
 	ofono_modem_set_data(modem, data);
@@ -90,6 +90,11 @@ static void mbm_remove(struct ofono_modem *modem)
 	struct mbm_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
+
+	if (data->reopen_source > 0) {
+		g_source_remove(data->reopen_source);
+		data->reopen_source = 0;
+	}
 
 	ofono_modem_set_data(modem, NULL);
 
@@ -165,11 +170,11 @@ static void mbm_quirk_d5530(struct ofono_modem *modem)
 				FALSE, NULL, NULL);
 }
 
-static void mbm_check_model(gboolean ok, GAtResult *result, gpointer user_data)
+static void check_model(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
 	GAtResultIter iter;
-	char const *model = "";
+	char const *model;
 
 	DBG("");
 
@@ -203,7 +208,7 @@ static void cfun_enable(gboolean ok, GAtResult *result, gpointer user_data)
 	}
 
 	g_at_chat_send(data->modem_port, "AT+CGMM", NULL,
-			mbm_check_model, modem, NULL);
+					check_model, modem, NULL);
 }
 
 static void cfun_query(gboolean ok, GAtResult *result, gpointer user_data)
@@ -283,7 +288,7 @@ static GAtChat *create_port(const char *device)
 	GAtChat *chat;
 
 	channel = g_at_tty_open(device, NULL);
-	if (!channel)
+	if (channel == NULL)
 		return NULL;
 
 	syntax = g_at_syntax_new_gsm_permissive();
@@ -291,7 +296,7 @@ static GAtChat *create_port(const char *device)
 	g_at_syntax_unref(syntax);
 	g_io_channel_unref(channel);
 
-	if (!chat)
+	if (chat == NULL)
 		return NULL;
 
 	return chat;
@@ -346,6 +351,9 @@ static void mbm_disconnect(gpointer user_data)
 	data->data_port = NULL;
 
 	/* Waiting for the +CGEV: ME DEACT might also work */
+	if (data->reopen_source > 0)
+		g_source_remove(data->reopen_source);
+
 	data->reopen_source = g_timeout_add_seconds(1, reopen_callback, modem);
 }
 
@@ -430,7 +438,7 @@ static int mbm_disable(struct ofono_modem *modem)
 		data->reopen_source = 0;
 	}
 
-	if (!data->modem_port)
+	if (data->modem_port == NULL)
 		return 0;
 
 	g_at_chat_cancel_all(data->modem_port);
@@ -462,7 +470,7 @@ static void mbm_set_online(struct ofono_modem *modem, ofono_bool_t online,
 
 	DBG("modem %p %s", modem, online ? "online" : "offline");
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (g_at_chat_send(chat, command, NULL, set_online_cb, cbd, g_free))
@@ -496,6 +504,8 @@ static void mbm_post_sim(struct ofono_modem *modem)
 	DBG("%p", modem);
 
 	ofono_stk_create(modem, 0, "mbmmodem", data->modem_port);
+
+	ofono_sms_create(modem, 0, "atmodem", data->modem_port);
 }
 
 static void mbm_post_online(struct ofono_modem *modem)
@@ -507,8 +517,6 @@ static void mbm_post_online(struct ofono_modem *modem)
 
 	ofono_netreg_create(modem, OFONO_VENDOR_MBM,
 					"atmodem", data->modem_port);
-
-	ofono_sms_create(modem, 0, "atmodem", data->modem_port);
 
 	switch (data->variant) {
 	case MBM_GENERIC:
@@ -523,7 +531,7 @@ static void mbm_post_online(struct ofono_modem *modem)
 
 	data->gprs = ofono_gprs_create(modem, OFONO_VENDOR_MBM,
 					"atmodem", data->modem_port);
-	if (!data->gprs)
+	if (data->gprs == NULL)
 		return;
 
 	gc = ofono_gprs_context_create(modem, 0,

@@ -408,7 +408,7 @@ static gboolean sim_fs_op_read_record(gpointer user)
 
 	switch (op->structure) {
 	case OFONO_SIM_FILE_STRUCTURE_FIXED:
-		if (!driver->read_file_linear) {
+		if (driver->read_file_linear == NULL) {
 			sim_fs_op_error(fs);
 			return FALSE;
 		}
@@ -418,7 +418,7 @@ static gboolean sim_fs_op_read_record(gpointer user)
 						sim_fs_op_retrieve_cb, fs);
 		break;
 	case OFONO_SIM_FILE_STRUCTURE_CYCLIC:
-		if (!driver->read_file_cyclic) {
+		if (driver->read_file_cyclic == NULL) {
 			sim_fs_op_error(fs);
 			return FALSE;
 		}
@@ -554,7 +554,8 @@ static gboolean sim_fs_op_check_cached(struct sim_fs *fs)
 	enum ofono_sim_file_structure structure;
 	int record_length;
 
-	if (imsi == NULL || op->info_only == TRUE)
+	if (imsi == NULL || phase == OFONO_SIM_PHASE_UNKNOWN ||
+			op->info_only == TRUE)
 		return FALSE;
 
 	path = g_strdup_printf(SIM_CACHE_PATH, imsi, phase, op->id);
@@ -626,7 +627,7 @@ static gboolean sim_fs_op_next(gpointer user_data)
 
 	fs->op_source = 0;
 
-	if (!fs->op_q)
+	if (fs->op_q == NULL)
 		return FALSE;
 
 	op = g_queue_peek_head(fs->op_q);
@@ -671,16 +672,16 @@ int sim_fs_read_info(struct sim_fs *fs, int id,
 {
 	struct sim_fs_op *op;
 
-	if (!cb)
+	if (cb == NULL)
 		return -EINVAL;
 
-	if (!fs->driver)
+	if (fs->driver == NULL)
 		return -EINVAL;
 
-	if (!fs->driver->read_file_info)
+	if (fs->driver->read_file_info == NULL)
 		return -ENOSYS;
 
-	if (!fs->op_q)
+	if (fs->op_q == NULL)
 		fs->op_q = g_queue_new();
 
 	op = g_try_new0(struct sim_fs_op, 1);
@@ -709,16 +710,16 @@ int sim_fs_read(struct sim_fs *fs, int id,
 {
 	struct sim_fs_op *op;
 
-	if (!cb)
+	if (cb == NULL)
 		return -EINVAL;
 
-	if (!fs->driver)
+	if (fs->driver == NULL)
 		return -EINVAL;
 
-	if (!fs->driver->read_file_info)
+	if (fs->driver->read_file_info == NULL)
 		return -ENOSYS;
 
-	if (!fs->op_q)
+	if (fs->op_q == NULL)
 		fs->op_q = g_queue_new();
 
 	op = g_try_new0(struct sim_fs_op, 1);
@@ -749,10 +750,10 @@ int sim_fs_write(struct sim_fs *fs, int id, ofono_sim_file_write_cb_t cb,
 	struct sim_fs_op *op;
 	gconstpointer fn = NULL;
 
-	if (!cb)
+	if (cb == NULL)
 		return -EINVAL;
 
-	if (!fs->driver)
+	if (fs->driver == NULL)
 		return -EINVAL;
 
 	switch (structure) {
@@ -772,7 +773,7 @@ int sim_fs_write(struct sim_fs *fs, int id, ofono_sim_file_write_cb_t cb,
 	if (fn == NULL)
 		return -ENOSYS;
 
-	if (!fs->op_q)
+	if (fs->op_q == NULL)
 		fs->op_q = g_queue_new();
 
 	op = g_try_new0(struct sim_fs_op, 1);
@@ -836,6 +837,9 @@ char *sim_fs_get_cached_image(struct sim_fs *fs, int id)
 		return NULL;
 
 	phase = ofono_sim_get_phase(fs->sim);
+	if (phase == OFONO_SIM_PHASE_UNKNOWN)
+		return NULL;
+
 	path = g_strdup_printf(SIM_IMAGE_CACHE_PATH, imsi, phase, id);
 
 	TFR(stat(path, &st_buf));
@@ -903,18 +907,28 @@ void sim_fs_check_version(struct sim_fs *fs)
 	const char *imsi = ofono_sim_get_imsi(fs->sim);
 	enum ofono_sim_phase phase = ofono_sim_get_phase(fs->sim);
 	unsigned char version;
-	struct dirent **entries;
-	int len;
-	char *path;
+
+	if (imsi == NULL || phase == OFONO_SIM_PHASE_UNKNOWN)
+		return;
 
 	if (read_file(&version, 1, SIM_CACHE_VERSION, imsi, phase) == 1)
 		if (version == SIM_FS_VERSION)
 			return;
 
-	path = g_strdup_printf(SIM_CACHE_BASEPATH, imsi, phase);
+	sim_fs_cache_flush(fs);
 
-	ofono_info("Detected old simfs version in %s, removing", path);
-	len = scandir(path, &entries, NULL, alphasort);
+	version = SIM_FS_VERSION;
+	write_file(&version, 1, SIM_CACHE_MODE, SIM_CACHE_VERSION, imsi, phase);
+}
+
+void sim_fs_cache_flush(struct sim_fs *fs)
+{
+	const char *imsi = ofono_sim_get_imsi(fs->sim);
+	enum ofono_sim_phase phase = ofono_sim_get_phase(fs->sim);
+	char *path = g_strdup_printf(SIM_CACHE_BASEPATH, imsi, phase);
+	struct dirent **entries;
+	int len = scandir(path, &entries, NULL, alphasort);
+
 	g_free(path);
 
 	if (len > 0) {
@@ -927,20 +941,47 @@ void sim_fs_check_version(struct sim_fs *fs)
 		g_free(entries);
 	}
 
-	path = g_strdup_printf(SIM_IMAGE_CACHE_BASEPATH, imsi, phase);
-	len = scandir(path, &entries, NULL, alphasort);
+	sim_fs_image_cache_flush(fs);
+}
+
+void sim_fs_cache_flush_file(struct sim_fs *fs, int id)
+{
+	const char *imsi = ofono_sim_get_imsi(fs->sim);
+	enum ofono_sim_phase phase = ofono_sim_get_phase(fs->sim);
+	char *path = g_strdup_printf(SIM_CACHE_PATH, imsi, phase, id);
+
+	remove(path);
+	g_free(path);
+}
+
+void sim_fs_image_cache_flush(struct sim_fs *fs)
+{
+	const char *imsi = ofono_sim_get_imsi(fs->sim);
+	enum ofono_sim_phase phase = ofono_sim_get_phase(fs->sim);
+	char *path = g_strdup_printf(SIM_IMAGE_CACHE_BASEPATH, imsi, phase);
+	struct dirent **entries;
+	int len = scandir(path, &entries, NULL, alphasort);
+
 	g_free(path);
 
-	if (len > 0) {
-		/* Remove everything */
-		while (len--) {
-			remove_imagefile(imsi, phase, entries[len]);
-			g_free(entries[len]);
-		}
+	if (len <= 0)
+		return;
 
-		g_free(entries);
+	/* Remove everything */
+	while (len--) {
+		remove_imagefile(imsi, phase, entries[len]);
+		g_free(entries[len]);
 	}
 
-	version = SIM_FS_VERSION;
-	write_file(&version, 1, SIM_CACHE_MODE, SIM_CACHE_VERSION, imsi, phase);
+	g_free(entries);
+}
+
+void sim_fs_image_cache_flush_file(struct sim_fs *fs, int id)
+{
+	const char *imsi = ofono_sim_get_imsi(fs->sim);
+	enum ofono_sim_phase phase = ofono_sim_get_phase(fs->sim);
+	char *path = g_strdup_printf(SIM_IMAGE_CACHE_PATH, imsi, phase, id);
+
+	remove(path);
+	g_free(path);
 }

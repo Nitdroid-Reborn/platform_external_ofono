@@ -223,6 +223,7 @@ struct sms_scts {
 	guint8 hour;
 	guint8 minute;
 	guint8 second;
+	gboolean has_timezone;
 	gint8 timezone;
 };
 
@@ -407,6 +408,12 @@ struct cbs_topic_range {
 	unsigned short max;
 };
 
+struct txq_backup_entry {
+	GSList *msg_list;
+	unsigned char uuid[SMS_MSGID_LEN];
+	unsigned long flags;
+};
+
 static inline gboolean is_bit_set(unsigned char oct, int bit)
 {
 	int mask = 0x1 << bit;
@@ -516,6 +523,17 @@ void status_report_assembly_add_fragment(struct status_report_assembly
 void status_report_assembly_expire(struct status_report_assembly *assembly,
 					time_t before);
 
+gboolean sms_tx_backup_store(const char *imsi, unsigned long id,
+				unsigned long flags, const char *uuid,
+				guint8 seq, const unsigned char *pdu,
+				int pdu_len, int tpdu_len);
+void sms_tx_backup_remove(const char *imsi, unsigned long id,
+				unsigned long flags, const char *uuid,
+				guint8 seq);
+void sms_tx_backup_free(const char *imsi, unsigned long id,
+				unsigned long flags, const char *uuid);
+GQueue *sms_tx_queue_load(const char *imsi);
+
 GSList *sms_text_prepare(const char *to, const char *utf8, guint16 ref,
 				gboolean use_16bit,
 				gboolean use_delivery_reports);
@@ -539,7 +557,7 @@ gboolean cbs_extract_app_port(const struct cbs *cbs, int *dst, int *src,
 
 char *cbs_decode_text(GSList *cbs_list, char *iso639_lang);
 
-struct cbs_assembly *cbs_assembly_new();
+struct cbs_assembly *cbs_assembly_new(void);
 void cbs_assembly_free(struct cbs_assembly *assembly);
 GSList *cbs_assembly_add_page(struct cbs_assembly *assembly,
 				const struct cbs *cbs);

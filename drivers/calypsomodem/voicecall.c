@@ -64,7 +64,7 @@ static void calypso_template(struct ofono_voicecall *vc, const char *cmd,
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 	struct cb_data *cbd = cb_data_new(cb, data);
 
-	if (!cbd)
+	if (cbd == NULL)
 		goto error;
 
 	if (g_at_chat_send(vd->chat, cmd, none_prefix,
@@ -80,7 +80,6 @@ error:
 static void calypso_dial(struct ofono_voicecall *vc,
 				const struct ofono_phone_number *ph,
 				enum ofono_clir_option clir,
-				enum ofono_cug_option cug,
 				ofono_voicecall_cb_t cb, void *data)
 {
 	char buf[256];
@@ -96,14 +95,6 @@ static void calypso_dial(struct ofono_voicecall *vc,
 		break;
 	case OFONO_CLIR_OPTION_SUPPRESSION:
 		strcat(buf, "i");
-		break;
-	default:
-		break;
-	}
-
-	switch (cug) {
-	case OFONO_CUG_OPTION_INVOCATION:
-		strcat(buf, "G");
 		break;
 	default:
 		break;
@@ -210,7 +201,7 @@ static void calypso_send_dtmf(struct ofono_voicecall *vc, const char *dtmf,
 	/* strlen("+VTS=\"T\";") = 9 + initial AT + null */
 	buf = g_try_new(char, len * 9 + 3);
 
-	if (!buf) {
+	if (buf == NULL) {
 		CALLBACK_WITH_FAILURE(cb, data);
 		return;
 	}
@@ -327,6 +318,8 @@ static void cpi_notify(GAtResult *result, gpointer user_data)
 		g_at_chat_send(vd->chat, "AT%N0187", none_prefix,
 				NULL, NULL, NULL);
 
+	memset(&call, 0, sizeof(call));
+
 	switch (msgtype) {
 	case 0:
 		/* Set call status to incoming */
@@ -390,7 +383,7 @@ static int calypso_voicecall_probe(struct ofono_voicecall *vc,
 	struct voicecall_data *vd;
 
 	vd = g_try_new0(struct voicecall_data, 1);
-	if (!vd)
+	if (vd == NULL)
 		return -ENOMEM;
 
 	vd->chat = g_at_chat_clone(chat);
@@ -434,12 +427,12 @@ static struct ofono_voicecall_driver driver = {
 	.send_tones		= calypso_send_dtmf
 };
 
-void calypso_voicecall_init()
+void calypso_voicecall_init(void)
 {
 	ofono_voicecall_driver_register(&driver);
 }
 
-void calypso_voicecall_exit()
+void calypso_voicecall_exit(void)
 {
 	ofono_voicecall_driver_unregister(&driver);
 }

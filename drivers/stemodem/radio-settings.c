@@ -192,8 +192,9 @@ static int ste_radio_settings_probe(struct ofono_radio_settings *rs,
 {
 	GAtChat *chat = data;
 	struct radio_settings_data *rsd;
+
 	rsd = g_try_new0(struct radio_settings_data, 1);
-	if (!rsd)
+	if (rsd == NULL)
 		return -ENOMEM;
 
 	rsd->chat = chat;
@@ -219,12 +220,12 @@ static struct ofono_radio_settings_driver driver = {
 	.set_rat_mode	= ste_set_rat_mode
 };
 
-void ste_radio_settings_init()
+void ste_radio_settings_init(void)
 {
 	ofono_radio_settings_driver_register(&driver);
 }
 
-void ste_radio_settings_exit()
+void ste_radio_settings_exit(void)
 {
 	ofono_radio_settings_driver_unregister(&driver);
 }

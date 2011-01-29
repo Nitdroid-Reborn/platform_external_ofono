@@ -26,6 +26,8 @@ ifeq ($(BUILD_WITH_OFONO),true)
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
+LOCAL_MODULE_TAGS := optional
+
 LOCAL_CFLAGS+=-DOFONO_PLUGIN_BUILTIN -DHAVE_CONFIG_H
 
 LOCAL_SRC_FILES:= \
@@ -40,8 +42,8 @@ LOCAL_SRC_FILES:= \
 	gisi/pep.c \
 	gisi/pipe.c \
 	gisi/iter.c \
-	gisi/verify.c \
 	gisi/server.c \
+	gisi/message.c \
 	drivers/isimodem/isimodem.c \
 	drivers/isimodem/audio-settings.c \
 	drivers/isimodem/debug.c \
@@ -79,6 +81,7 @@ LOCAL_SRC_FILES:= \
 	src/voicecall.c \
 	src/ussd.c \
 	src/sms.c \
+	src/message.c \
 	src/stk.c \
 	src/stkagent.c \
 	src/stkutil.c \
@@ -100,6 +103,7 @@ LOCAL_SRC_FILES:= \
 	src/watch.c \
 	src/call-volume.c \
 	src/gprs.c \
+	src/gprs-provision.c \
 	src/storage.c \
 	src/util.c \
 	src/tsearch.c \
@@ -122,6 +126,7 @@ LOCAL_C_INCLUDES := \
 
 
 LOCAL_SHARED_LIBRARIES := \
+	libdl \
 	liblog \
 	libcutils \
 	libdbus	\

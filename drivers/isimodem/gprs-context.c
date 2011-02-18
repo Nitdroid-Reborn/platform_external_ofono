@@ -348,31 +348,45 @@ static void send_context_authenticate(GIsiClient *client, void *opaque)
 	size_t username_len = strlen(cd->username);
 	size_t password_len = strlen(cd->password);
 
-	const unsigned char top[] = {
+	/* Pad the fields to the next 32bit boundary */
+	size_t sb_userinfo_len = (3 + username_len + 3) & ~3;
+	uint8_t userinfo_pad[sb_userinfo_len - (3 + username_len)];
+
+	size_t sb_password_info_len = (3 + password_len + 3) & ~3;
+	uint8_t password_pad[sb_password_info_len - (3 + password_len)];
+
+	const uint8_t top[] = {
 		GPDS_CONTEXT_AUTH_REQ,
 		cd->handle,
 		2,	/* sub blocks */
 		GPDS_USER_NAME_INFO,
-		3 + username_len + 3,
+		sb_userinfo_len,
 		username_len,
 		/* Username goes here */
+		/* Possible padding goes here */
 	};
 
-	const unsigned char bottom[] = {
+	const uint8_t bottom[] = {
 		GPDS_PASSWORD_INFO,
 		3 + password_len + 3,
 		password_len,
 		/* Password goes here */
+		/* Possible padding goes here */
 	};
 
-	const struct iovec iov[4] = {
+	const struct iovec iov[6] = {
 		{ (uint8_t *) top, sizeof(top) },
 		{ cd->username, username_len },
-		{ (uint8_t *) bottom, sizeof(bottom) },
+		{ userinfo_pad, sizeof(userinfo_pad) },
+		{ (uint8_t *)bottom, sizeof(bottom) },
 		{ cd->password, password_len },
+		{ password_pad, sizeof(password_pad) },
 	};
 
-	if (!g_isi_client_vsend(client, iov, 4, context_auth_cb, cd, NULL))
+	memset(userinfo_pad, 0, sizeof(userinfo_pad));
+	memset(password_pad, 0, sizeof(password_pad));
+
+	if (!g_isi_client_vsend(client, iov, 6, context_auth_cb, cd, NULL))
 		gprs_up_fail(cd);
 }
 
@@ -393,8 +407,10 @@ static void link_conf_cb(const GIsiMessage *msg, void *opaque)
 {
 	struct context_data *cd = opaque;
 	size_t apn_len = strlen(cd->apn);
+	size_t sb_apn_info_len = (3 + apn_len + 3) & ~3;
+	size_t apn_pad[sb_apn_info_len - (3 + apn_len)];
 
-	const unsigned char req[] = {
+	const uint8_t req[] = {
 		GPDS_CONTEXT_CONFIGURE_REQ,
 		cd->handle,	/* context ID */
 		cd->type,	/* PDP type */
@@ -406,20 +422,23 @@ static void link_conf_cb(const GIsiMessage *msg, void *opaque)
 		4,		/* subblock length */
 		0, 0,		/* padding */
 		GPDS_APN_INFO,
-		3 + apn_len + 3,
+		sb_apn_info_len,
 		apn_len,
+		/* Possible padding goes here */
 	};
 
-	const struct iovec iov[2] = {
-		{ (uint8_t *) req, sizeof(req) },
+	const struct iovec iov[3] = {
+		{ (uint8_t *)req, sizeof(req) },
 		{ cd->apn, apn_len },
+		{ apn_pad, sizeof(apn_pad) },
 	};
+
+	memset(apn_pad, 0, sizeof(apn_pad));
 
 	if (!check_resp(msg, GPDS_LL_CONFIGURE_RESP, 2, cd, gprs_up_fail))
 		return;
 
-	if (!g_isi_client_vsend(cd->client, iov, 2,
-				context_conf_cb, cd, NULL))
+	if (!g_isi_client_vsend(cd->client, iov, 3, context_conf_cb, cd, NULL))
 		gprs_up_fail(cd);
 }
 

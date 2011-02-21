@@ -43,14 +43,15 @@
 #include "stemodem.h"
 
 enum call_status_ste {
-	STE_CALL_STATUS_IDLE = 0,
-	STE_CALL_STATUS_CALLING = 1,
-	STE_CALL_STATUS_CONNECTING = 2,
-	STE_CALL_STATUS_ACTIVE = 3,
-	STE_CALL_STATUS_HOLD = 4,
-	STE_CALL_STATUS_WAITING = 5,
-	STE_CALL_STATUS_ALERTING = 6,
-	STE_CALL_STATUS_BUSY = 7
+	STE_CALL_STATUS_IDLE =		0,
+	STE_CALL_STATUS_CALLING =	1,
+	STE_CALL_STATUS_CONNECTING =	2,
+	STE_CALL_STATUS_ACTIVE =	3,
+	STE_CALL_STATUS_HOLD =		4,
+	STE_CALL_STATUS_WAITING =	5,
+	STE_CALL_STATUS_ALERTING =	6,
+	STE_CALL_STATUS_BUSY =		7,
+	STE_CALL_STATUS_RELEASED =	8,
 };
 
 static const char *none_prefix[] = { NULL };
@@ -80,6 +81,7 @@ static int call_status_ste_to_ofono(enum call_status_ste status)
 {
 	switch (status) {
 	case STE_CALL_STATUS_IDLE:
+	case STE_CALL_STATUS_RELEASED:
 		return CALL_STATUS_DISCONNECTED;
 	case STE_CALL_STATUS_CALLING:
 		return CALL_STATUS_DIALING;
@@ -108,9 +110,11 @@ static struct ofono_call *create_call(struct ofono_voicecall *vc, int type,
 	struct ofono_call *call;
 
 	/* Generate a call structure for the waiting call */
-	call = g_try_new0(struct ofono_call, 1);
+	call = g_try_new(struct ofono_call, 1);
 	if (call == NULL)
 		return NULL;
+
+	ofono_call_init(call);
 
 	call->type = type;
 	call->direction = direction;
@@ -144,8 +148,8 @@ static void ste_generic_cb(gboolean ok, GAtResult *result, gpointer user_data)
 		for (l = vd->calls; l; l = l->next) {
 			call = l->data;
 
-			if (req->affected_types & (0x1 << call->status))
-				vd->local_release |= (0x1 << call->id);
+			if (req->affected_types & (1 << call->status))
+				vd->local_release |= (1 << call->id);
 		}
 	}
 
@@ -162,7 +166,7 @@ static void release_id_cb(gboolean ok, GAtResult *result,
 	decode_at_error(&error, g_at_result_final_response(result));
 
 	if (ok)
-		vd->local_release = 0x1 << req->id;
+		vd->local_release = 1 << req->id;
 
 	req->cb(&error, req->data);
 }
@@ -186,9 +190,6 @@ static void ste_dial(struct ofono_voicecall *vc,
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 	struct cb_data *cbd = cb_data_new(cb, data);
 	char buf[256];
-
-	if (cbd == NULL)
-		goto error;
 
 	cbd->user = vc;
 
@@ -214,7 +215,6 @@ static void ste_dial(struct ofono_voicecall *vc,
 				atd_cb, cbd, g_free) > 0)
 		return;
 
-error:
 	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, data);
@@ -254,7 +254,14 @@ static void ste_answer(struct ofono_voicecall *vc,
 static void ste_hangup(struct ofono_voicecall *vc,
 			ofono_voicecall_cb_t cb, void *data)
 {
-	ste_template("AT+CHUP", vc, ste_generic_cb, 0x3f, cb, data);
+	unsigned int active_dial_alert_or_incoming =
+			(1 << CALL_STATUS_ACTIVE) |
+			(1 << CALL_STATUS_DIALING) |
+			(1 << CALL_STATUS_ALERTING) |
+			(1 << CALL_STATUS_INCOMING);
+
+	ste_template("AT+CHUP", vc, ste_generic_cb,
+			active_dial_alert_or_incoming, cb, data);
 }
 
 static void ste_hold_all_active(struct ofono_voicecall *vc,
@@ -266,14 +273,17 @@ static void ste_hold_all_active(struct ofono_voicecall *vc,
 static void ste_release_all_held(struct ofono_voicecall *vc,
 				ofono_voicecall_cb_t cb, void *data)
 {
-	unsigned int held_status = 0x1 << 1;
-	ste_template("AT+CHLD=0", vc, ste_generic_cb, held_status, cb, data);
+	unsigned int held = 1 << CALL_STATUS_HELD;
+
+	ste_template("AT+CHLD=0", vc, ste_generic_cb, held, cb, data);
 }
 
 static void ste_set_udub(struct ofono_voicecall *vc,
 			ofono_voicecall_cb_t cb, void *data)
 {
-	unsigned int incoming_or_waiting = (0x1 << 4) | (0x1 << 5);
+	unsigned int incoming_or_waiting =
+			(1 << CALL_STATUS_INCOMING) | (1 << CALL_STATUS_WAITING);
+
 	ste_template("AT+CHLD=0", vc, ste_generic_cb, incoming_or_waiting,
 			cb, data);
 }
@@ -281,7 +291,9 @@ static void ste_set_udub(struct ofono_voicecall *vc,
 static void ste_release_all_active(struct ofono_voicecall *vc,
 					ofono_voicecall_cb_t cb, void *data)
 {
-	ste_template("AT+CHLD=1", vc, ste_generic_cb, 0x1, cb, data);
+	unsigned int active = 1 << CALL_STATUS_ACTIVE;
+
+	ste_template("AT+CHLD=1", vc, ste_generic_cb, active, cb, data);
 }
 
 static void ste_release_specific(struct ofono_voicecall *vc, int id,
@@ -346,7 +358,8 @@ static void ste_deflect(struct ofono_voicecall *vc,
 			ofono_voicecall_cb_t cb, void *data)
 {
 	char buf[128];
-	unsigned int incoming_or_waiting = (0x1 << 4) | (0x1 << 5);
+	unsigned int incoming_or_waiting =
+		(1 << CALL_STATUS_INCOMING) | (1 << CALL_STATUS_WAITING);
 
 	snprintf(buf, sizeof(buf), "AT+CTFR=\"%s\",%d", ph->number, ph->type);
 	ste_template(buf, vc, ste_generic_cb, incoming_or_waiting, cb, data);
@@ -369,9 +382,6 @@ static void ste_send_dtmf(struct ofono_voicecall *vc, const char *dtmf,
 	struct cb_data *cbd = cb_data_new(cb, data);
 	int s;
 	char *buf;
-
-	if (cbd == NULL)
-		goto error;
 
 	/* strlen("AT+VTS=) = 7 + NULL */
 	buf = g_try_new(char, strlen(dtmf) + 8);
@@ -471,7 +481,7 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 
 		existing_call->status = status;
 
-		if (vd->local_release & (0x1 << existing_call->id))
+		if (vd->local_release & (1 << existing_call->id))
 			reason = OFONO_DISCONNECT_REASON_LOCAL_HANGUP;
 		else
 			reason = OFONO_DISCONNECT_REASON_REMOTE_HANGUP;
@@ -479,7 +489,9 @@ static void ecav_notify(GAtResult *result, gpointer user_data)
 		ofono_voicecall_disconnected(vc, existing_call->id,
 						reason, NULL);
 
+		vd->local_release &= ~(1 << existing_call->id);
 		vd->calls = g_slist_remove(vd->calls, l->data);
+		g_free(existing_call);
 		break;
 	}
 
@@ -527,6 +539,13 @@ static void ste_voicecall_initialized(gboolean ok, GAtResult *result,
 	struct ofono_voicecall *vc = user_data;
 	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 
+	if (!ok) {
+		ofono_error("*ECAV not enabled. "
+				"Do not have proper call handling");
+		ofono_voicecall_remove(vc);
+		return;
+	}
+
 	g_at_chat_register(vd->chat, "*ECAV:", ecav_notify, FALSE, vc, NULL);
 	ofono_voicecall_register(vc);
 }
@@ -545,7 +564,7 @@ static int ste_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 
 	ofono_voicecall_set_data(vc, vd);
 
-	g_at_chat_send(vd->chat, "AT*ECAM=1", none_prefix,
+	g_at_chat_send(vd->chat, "AT*ECAM=2", none_prefix,
 			ste_voicecall_initialized, vc, NULL);
 
 	return 0;

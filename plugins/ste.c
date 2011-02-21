@@ -48,6 +48,7 @@
 #include <ofono/netreg.h>
 #include <ofono/phonebook.h>
 #include <ofono/sim.h>
+#include <ofono/cbs.h>
 #include <ofono/sms.h>
 #include <ofono/ssn.h>
 #include <ofono/ussd.h>
@@ -320,13 +321,9 @@ static void ste_set_online(struct ofono_modem *modem, ofono_bool_t online,
 
 	DBG("modem %p %s", modem, online ? "online" : "offline");
 
-	if (cbd == NULL)
-		goto error;
-
 	if (g_at_chat_send(chat, command, NULL, set_online_cb, cbd, g_free))
 		return;
 
-error:
 	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, cbd->data);
@@ -377,6 +374,7 @@ static void ste_post_online(struct ofono_modem *modem)
 	ofono_call_barring_create(modem, 0, "atmodem", data->chat);
 	ofono_ssn_create(modem, 0, "atmodem", data->chat);
 	ofono_call_volume_create(modem, 0, "atmodem", data->chat);
+	ofono_cbs_create(modem, 0, "atmodem", data->chat);
 
 	gprs = ofono_gprs_create(modem, OFONO_VENDOR_MBM,
 					"atmodem", data->chat);

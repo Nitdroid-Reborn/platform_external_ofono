@@ -105,7 +105,7 @@ struct ofono_network_time {
 	int mday;	/* Day of month [1..31], -1 if unavailable */
 	int mon;	/* Month [1..12], -1 if unavailable */
 	int year;	/* Current year, -1 if unavailable */
-	int dst;	/* Current adjustment, in seconds */
+	int dst;	/* Current adjustment, in hours */
 	int utcoff;	/* Offset from UTC in seconds */
 };
 
@@ -116,6 +116,7 @@ struct ofono_uuid {
 };
 
 const char *ofono_uuid_to_str(const struct ofono_uuid *uuid);
+void ofono_call_init(struct ofono_call *call);
 
 #ifdef __cplusplus
 }

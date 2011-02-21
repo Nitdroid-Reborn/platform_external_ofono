@@ -128,6 +128,8 @@ enum ofono_atom_type {
 	OFONO_ATOM_TYPE_CTM,
 	OFONO_ATOM_TYPE_CDMA_VOICECALL_MANAGER,
 	OFONO_ATOM_TYPE_SIM_AUTH,
+	OFONO_ATOM_TYPE_EMULATOR_DUN,
+	OFONO_ATOM_TYPE_EMULATOR_HFP,
 };
 
 enum ofono_atom_watch_condition {
@@ -142,6 +144,11 @@ typedef void (*ofono_atom_watch_func)(struct ofono_atom *atom,
 typedef void (*ofono_atom_func)(struct ofono_atom *atom, void *data);
 
 struct ofono_atom *__ofono_modem_add_atom(struct ofono_modem *modem,
+					enum ofono_atom_type type,
+					void (*destruct)(struct ofono_atom *),
+					void *data);
+
+struct ofono_atom *__ofono_modem_add_atom_offline(struct ofono_modem *modem,
 					enum ofono_atom_type type,
 					void (*destruct)(struct ofono_atom *),
 					void *data);
@@ -181,11 +188,23 @@ unsigned int __ofono_modemwatch_add(ofono_modemwatch_cb_t cb, void *user,
 					ofono_destroy_func destroy);
 gboolean __ofono_modemwatch_remove(unsigned int id);
 
-typedef void (*ofono_modem_online_notify_func)(ofono_bool_t online, void *data);
+typedef void (*ofono_modem_online_notify_func)(struct ofono_modem *modem,
+						ofono_bool_t online,
+						void *data);
 unsigned int __ofono_modem_add_online_watch(struct ofono_modem *modem,
 					ofono_modem_online_notify_func notify,
 					void *data, ofono_destroy_func destroy);
 void __ofono_modem_remove_online_watch(struct ofono_modem *modem,
+					unsigned int id);
+
+typedef void (*ofono_modem_powered_notify_func)(struct ofono_modem *modem,
+						ofono_bool_t powered,
+						void *data);
+
+unsigned int __ofono_modem_add_powered_watch(struct ofono_modem *modem,
+					ofono_modem_online_notify_func notify,
+					void *data, ofono_destroy_func destroy);
+void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
 					unsigned int id);
 
 #include <ofono/call-barring.h>
@@ -298,6 +317,11 @@ unsigned short __ofono_sms_get_next_ref(struct ofono_sms *sms);
 ofono_bool_t __ofono_sim_service_available(struct ofono_sim *sim,
 						int ust_service,
 						int sst_service);
+
+ofono_bool_t __ofono_is_valid_sim_pin(const char *pin,
+					enum ofono_sim_password_type type);
+
+ofono_bool_t __ofono_is_valid_net_pin(const char *pin);
 
 #include <ofono/stk.h>
 
@@ -424,9 +448,11 @@ void __ofono_nettime_info_received(struct ofono_modem *modem,
 
 #include <ofono/gprs-provision.h>
 ofono_bool_t __ofono_gprs_provision_get_settings(const char *mcc,
-				const char *mnc,
+				const char *mnc, const char *spn,
 				struct ofono_gprs_provision_data **settings,
 				int *count);
 void __ofono_gprs_provision_free_settings(
 				struct ofono_gprs_provision_data *settings,
 				int count);
+
+#include <ofono/emulator.h>

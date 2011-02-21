@@ -77,6 +77,7 @@ struct ofono_sms {
 	GKeyFile *settings;
 	char *imsi;
 	int bearer;
+	enum sms_alphabet alphabet;
 	const struct ofono_sms_driver *driver;
 	void *driver_data;
 	struct ofono_atom *atom;
@@ -140,21 +141,56 @@ static const char *sms_bearer_to_string(int bearer)
 		return "cs-preferred";
 	};
 
-	return "unknown";
+	return NULL;
 }
 
-static int sms_bearer_from_string(const char *str)
+static gboolean sms_bearer_from_string(const char *str, int *bearer)
 {
 	if (g_str_equal(str, "ps-only"))
-		return 0;
+		*bearer = 0;
 	else if (g_str_equal(str, "cs-only"))
-		return 1;
+		*bearer = 1;
 	else if (g_str_equal(str, "ps-preferred"))
-		return 2;
+		*bearer = 2;
 	else if (g_str_equal(str, "cs-preferred"))
-		return 3;
+		*bearer = 3;
+	else
+		return FALSE;
 
-	return -1;
+	return TRUE;
+}
+
+static const char *sms_alphabet_to_string(enum sms_alphabet alphabet)
+{
+	switch (alphabet) {
+	case SMS_ALPHABET_TURKISH:
+		return "turkish";
+	case SMS_ALPHABET_SPANISH:
+		return "spanish";
+	case SMS_ALPHABET_PORTUGUESE:
+		return "portuguese";
+	case SMS_ALPHABET_DEFAULT:
+		return "default";
+	}
+
+	return NULL;
+}
+
+static gboolean sms_alphabet_from_string(const char *str,
+						enum sms_alphabet *alphabet)
+{
+	if (g_str_equal(str, "default"))
+		*alphabet = SMS_ALPHABET_DEFAULT;
+	else if (g_str_equal(str, "turkish"))
+		*alphabet = SMS_ALPHABET_TURKISH;
+	else if (g_str_equal(str, "spanish"))
+		*alphabet = SMS_ALPHABET_SPANISH;
+	else if (g_str_equal(str, "portuguese"))
+		*alphabet = SMS_ALPHABET_PORTUGUESE;
+	else
+		return FALSE;
+
+	return TRUE;
 }
 
 static unsigned int add_sms_handler(struct ofono_watchlist *watchlist,
@@ -253,6 +289,25 @@ static void set_bearer(struct ofono_sms *sms, int bearer)
 						DBUS_TYPE_STRING, &value);
 }
 
+static void set_alphabet(struct ofono_sms *sms, enum sms_alphabet alphabet)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+	const char *path = __ofono_atom_get_path(sms->atom);
+	const char *value;
+
+	if (sms->alphabet == alphabet)
+		return;
+
+	sms->alphabet = alphabet;
+
+	value = sms_alphabet_to_string(sms->alphabet);
+
+	ofono_dbus_signal_property_changed(conn, path,
+						OFONO_MESSAGE_MANAGER_INTERFACE,
+						"Alphabet",
+						DBUS_TYPE_STRING, &value);
+}
+
 static void set_sca(struct ofono_sms *sms,
 			const struct ofono_phone_number *sca)
 {
@@ -284,6 +339,7 @@ static DBusMessage *generate_get_properties_reply(struct ofono_sms *sms,
 	DBusMessageIter dict;
 	const char *sca;
 	const char *bearer;
+	const char *alphabet;
 
 	reply = dbus_message_new_method_return(msg);
 	if (reply == NULL)
@@ -305,6 +361,9 @@ static DBusMessage *generate_get_properties_reply(struct ofono_sms *sms,
 
 	bearer = sms_bearer_to_string(sms->bearer);
 	ofono_dbus_dict_append(&dict, "Bearer", DBUS_TYPE_STRING, &bearer);
+
+	alphabet = sms_alphabet_to_string(sms->alphabet);
+	ofono_dbus_dict_append(&dict, "Alphabet", DBUS_TYPE_STRING, &alphabet);
 
 	dbus_message_iter_close_container(&iter, &dict);
 
@@ -337,14 +396,14 @@ static DBusMessage *sms_get_properties(DBusConnection *conn,
 {
 	struct ofono_sms *sms = data;
 
+	if (sms->flags & MESSAGE_MANAGER_FLAG_CACHED)
+		return generate_get_properties_reply(sms, msg);
+
 	if (sms->pending)
 		return __ofono_error_busy(msg);
 
 	if (sms->driver->sca_query == NULL)
 		return __ofono_error_not_implemented(msg);
-
-	if (sms->flags & MESSAGE_MANAGER_FLAG_CACHED)
-		return generate_get_properties_reply(sms, msg);
 
 	sms->pending = dbus_message_ref(msg);
 
@@ -479,8 +538,7 @@ static DBusMessage *sms_set_property(DBusConnection *conn, DBusMessage *msg,
 
 		dbus_message_iter_get_basic(&var, &value);
 
-		bearer = sms_bearer_from_string(value);
-		if (bearer < 0)
+		if (sms_bearer_from_string(value, &bearer) != TRUE)
 			return __ofono_error_invalid_format(msg);
 
 		if (sms->driver->bearer_set == NULL ||
@@ -512,6 +570,24 @@ static DBusMessage *sms_set_property(DBusConnection *conn, DBusMessage *msg,
 						DBUS_TYPE_BOOLEAN, &value);
 		}
 
+		return NULL;
+	}
+
+	if (!strcmp(property, "Alphabet")) {
+		const char *value;
+		enum sms_alphabet alphabet;
+
+		if (dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_STRING)
+			return __ofono_error_invalid_args(msg);
+
+		dbus_message_iter_get_basic(&var, &value);
+
+		if (!sms_alphabet_from_string(value, &alphabet))
+			return __ofono_error_invalid_format(msg);
+
+		set_alphabet(sms, alphabet);
+
+		g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
 		return NULL;
 	}
 
@@ -613,7 +689,7 @@ next_q:
 		enum message_state ms;
 
 		sms_tx_backup_free(sms->imsi, entry->id, entry->flags,
-						ofono_uuid_to_str(&entry->uuid));
+					ofono_uuid_to_str(&entry->uuid));
 
 		if (ok)
 			ms = MESSAGE_STATE_SENT;
@@ -867,8 +943,10 @@ static DBusMessage *sms_send_message(DBusConnection *conn, DBusMessage *msg,
 	if (valid_phone_number_format(to) == FALSE)
 		return __ofono_error_invalid_format(msg);
 
-	msg_list = sms_text_prepare(to, text, sms->ref, use_16bit_ref,
-						sms->use_delivery_reports);
+	msg_list = sms_text_prepare_with_alphabet(to, text, sms->ref,
+						use_16bit_ref,
+						sms->use_delivery_reports,
+						sms->alphabet);
 
 	if (msg_list == NULL)
 		return __ofono_error_invalid_format(msg);
@@ -1585,6 +1663,8 @@ static void sms_remove(struct ofono_atom *atom)
 					sms->use_delivery_reports);
 		g_key_file_set_integer(sms->settings, SETTINGS_GROUP,
 					"Bearer", sms->bearer);
+		g_key_file_set_integer(sms->settings, SETTINGS_GROUP,
+					"Alphabet", sms->alphabet);
 
 		storage_close(sms->imsi, SETTINGS_STORE, sms->settings, TRUE);
 
@@ -1667,7 +1747,7 @@ static void mw_watch(struct ofono_atom *atom,
 
 static void sms_load_settings(struct ofono_sms *sms, const char *imsi)
 {
-	GError *error = NULL;
+	GError *error;
 
 	sms->settings = storage_open(imsi, SETTINGS_STORE);
 
@@ -1676,19 +1756,50 @@ static void sms_load_settings(struct ofono_sms *sms, const char *imsi)
 
 	sms->imsi = g_strdup(imsi);
 
+	error = NULL;
 	sms->ref = g_key_file_get_integer(sms->settings, SETTINGS_GROUP,
-							"NextReference", NULL);
-	if (sms->ref >= 65536)
-		sms->ref = 1;
+						"NextReference", &error);
 
+	if (error || sms->ref > 65536) {
+		g_error_free(error);
+		sms->ref = 1;
+		g_key_file_set_integer(sms->settings, SETTINGS_GROUP,
+					"NextReference", sms->ref);
+	}
+
+	error = NULL;
 	sms->use_delivery_reports =
 		g_key_file_get_boolean(sms->settings, SETTINGS_GROUP,
-					"UseDeliveryReports", NULL);
+					"UseDeliveryReports", &error);
 
+	if (error) {
+		g_error_free(error);
+		g_key_file_set_boolean(sms->settings, SETTINGS_GROUP,
+					"UseDeliveryReports",
+					sms->use_delivery_reports);
+	}
+
+	error = NULL;
 	sms->bearer = g_key_file_get_integer(sms->settings, SETTINGS_GROUP,
 							"Bearer", &error);
-	if (error)
+
+	if (error || sms_bearer_to_string(sms->bearer) == NULL) {
+		g_error_free(error);
 		sms->bearer = 3; /* Default to CS then PS */
+		g_key_file_set_integer(sms->settings, SETTINGS_GROUP,
+					"Bearer", sms->bearer);
+	}
+
+	error = NULL;
+	sms->alphabet = g_key_file_get_integer(sms->settings, SETTINGS_GROUP,
+						"Alphabet", &error);
+
+	if (error || sms_alphabet_to_string(sms->alphabet) == NULL) {
+		g_error_free(error);
+		sms->alphabet = SMS_ALPHABET_DEFAULT;
+		g_key_file_set_integer(sms->settings, SETTINGS_GROUP,
+					"Aphabet", sms->alphabet);
+	}
 }
 
 static void bearer_init_callback(const struct ofono_error *error, void *data)

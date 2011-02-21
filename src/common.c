@@ -649,43 +649,6 @@ const char *bearer_class_to_string(enum bearer_class cls)
 	return NULL;
 }
 
-gboolean is_valid_pin(const char *pin, enum pin_type type)
-{
-	unsigned int i;
-
-	/* Pin must not be empty */
-	if (pin == NULL || pin[0] == '\0')
-		return FALSE;
-
-	i = strlen(pin);
-	if (i != strspn(pin, "0123456789"))
-		return FALSE;
-
-	switch (type) {
-	case PIN_TYPE_PIN:
-		/* 11.11 Section 9.3 ("CHV"): 4..8 IA-5 digits */
-		if (4 <= i && i <= 8)
-			return TRUE;
-		break;
-	case PIN_TYPE_PUK:
-		/* 11.11 Section 9.3 ("UNBLOCK CHV"), 8 IA-5 digits */
-		if (i == 8)
-			return TRUE;
-		break;
-	case PIN_TYPE_NET:
-		/* 22.004 Section 5.2, 4 IA-5 digits */
-		if (i == 4)
-			return TRUE;
-		break;
-	case PIN_TYPE_NONE:
-		if (i < 8)
-			return TRUE;
-		break;
-	}
-
-	return FALSE;
-}
-
 const char *registration_status_to_string(int status)
 {
 	switch (status) {
@@ -761,4 +724,11 @@ const char *ofono_uuid_to_str(const struct ofono_uuid *uuid)
 	static char buf[OFONO_SHA1_UUID_LEN * 2 + 1];
 
 	return encode_hex_own_buf(uuid->uuid, OFONO_SHA1_UUID_LEN, 0, buf);
+}
+
+void ofono_call_init(struct ofono_call *call)
+{
+	memset(call, 0, sizeof(struct ofono_call));
+	call->cnap_validity = CNAP_VALIDITY_NOT_AVAILABLE;
+	call->clip_validity = CLIP_VALIDITY_NOT_AVAILABLE;
 }

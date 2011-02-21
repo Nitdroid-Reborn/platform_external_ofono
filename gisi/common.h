@@ -35,11 +35,19 @@ enum message_id {
 	PNS_NAME_ADD_REQ =			0x05,
 	PNS_NAME_REMOVE_REQ =			0x07,
 	PNS_SUBSCRIBED_RESOURCES_IND =		0x10,
+	PNS_SUBSCRIBED_RESOURCES_EXTEND_IND =	0x12,
 	COMM_ISI_VERSION_GET_REQ =		0x12,
 	COMM_ISI_VERSION_GET_RESP =		0x13,
 	COMM_ISA_ENTITY_NOT_REACHABLE_RESP =	0x14,
 	COMM_SERVICE_NOT_AUTHENTICATED_RESP =	0x17,
 	COMMON_MESSAGE =			0xF0,
+};
+
+enum GIsiPhonetDevice {
+	PN_DEV_PC =	0x10,	/* PC Suite */
+	PN_DEV_HOST =	0x00,	/* Host modem */
+	PN_DEV_MODEM =	0x60,	/* Modem */
+	PN_DEV_SOS =	0x6C,	/* Symbian or Linux */
 };
 
 enum GIsiMessageType {

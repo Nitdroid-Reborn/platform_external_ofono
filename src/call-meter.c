@@ -181,7 +181,8 @@ static void cm_get_properties_reply(struct ofono_call_meter *cm)
 	ofono_dbus_dict_append(&dict, "AccumulatedCallMeterMaximum",
 				DBUS_TYPE_UINT32, &cm->acm_max);
 
-	ofono_dbus_dict_append(&dict, "PricePerUnit", DBUS_TYPE_DOUBLE, &cm->ppu);
+	ofono_dbus_dict_append(&dict, "PricePerUnit", DBUS_TYPE_DOUBLE,
+				&cm->ppu);
 
 	ofono_dbus_dict_append(&dict, "Currency", DBUS_TYPE_STRING, &currency);
 
@@ -190,8 +191,8 @@ static void cm_get_properties_reply(struct ofono_call_meter *cm)
 	__ofono_dbus_pending_reply(&cm->pending, reply);
 }
 
-static void query_call_meter_callback(const struct ofono_error *error, int value,
-					void *data)
+static void query_call_meter_callback(const struct ofono_error *error,
+					int value, void *data)
 {
 	struct ofono_call_meter *cm = data;
 
@@ -306,8 +307,8 @@ static DBusMessage *cm_get_properties(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
-static void set_acm_max_query_callback(const struct ofono_error *error, int value,
-					void *data)
+static void set_acm_max_query_callback(const struct ofono_error *error,
+					int value, void *data)
 {
 	struct ofono_call_meter *cm = data;
 	DBusMessage *reply;
@@ -548,7 +549,7 @@ static DBusMessage *cm_set_property(DBusConnection *conn, DBusMessage *msg,
 
 	dbus_message_iter_get_basic(&iter, &passwd);
 
-	if (!is_valid_pin(passwd, PIN_TYPE_PIN))
+	if (!__ofono_is_valid_sim_pin(passwd, OFONO_SIM_PASSWORD_SIM_PIN2))
 		return __ofono_error_invalid_format(msg);
 
 	for (property = cm_properties; property->name; property++) {
@@ -620,7 +621,7 @@ static DBusMessage *cm_acm_reset(DBusConnection *conn, DBusMessage *msg,
 					DBUS_TYPE_INVALID) == FALSE)
 		return __ofono_error_invalid_args(msg);
 
-	if (!is_valid_pin(pin2, PIN_TYPE_PIN))
+	if (!__ofono_is_valid_sim_pin(pin2, OFONO_SIM_PASSWORD_SIM_PIN2))
 		return __ofono_error_invalid_format(msg);
 
 	cm->pending = dbus_message_ref(msg);

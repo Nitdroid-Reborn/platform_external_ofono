@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2009-2010  Marcel Holtmann <marcel at holtmann.org>
+ *  Copyright (C) 2009-2010  Marcel Holtmann <marcel@holtmann.org>
  *  Copyright (C) 2009-2010  Nokia Corporation
  *
  *
@@ -56,6 +56,7 @@ typedef enum {
 	BT_IO_OPT_SOURCE_CHANNEL,
 	BT_IO_OPT_DEST_CHANNEL,
 	BT_IO_OPT_PSM,
+	BT_IO_OPT_CID,
 	BT_IO_OPT_MTU,
 	BT_IO_OPT_OMTU,
 	BT_IO_OPT_IMTU,

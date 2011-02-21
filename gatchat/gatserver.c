@@ -319,24 +319,21 @@ static void s_template_cb(GAtServerRequestType type, GAtResult *result,
 	}
 }
 
-static void at_s3_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_s3_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	s_template_cb(type, result, server, &server->v250.s3, "S3", 0, 127);
 }
 
-static void at_s4_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_s4_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	s_template_cb(type, result, server, &server->v250.s4, "S4", 0, 127);
 }
 
-static void at_s5_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_s5_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	s_template_cb(type, result, server, &server->v250.s5, "S5", 0, 127);
 }
 
@@ -384,53 +381,46 @@ static void at_template_cb(GAtServerRequestType type, GAtResult *result,
 	}
 }
 
-static void at_e_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_e_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.echo, "E", 0, 1, 1);
 }
 
-static void at_q_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_q_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.quiet, "Q", 0, 1, 0);
 }
 
-static void at_v_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_v_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.is_v1, "V", 0, 1, 1);
 }
 
-static void at_x_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_x_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.res_format,
 			"X", 0, 4, 4);
 }
 
-static void at_s6_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_s6_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.s6, "S6", 0, 1, 1);
 }
 
-static void at_c109_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_c109_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.c109, "&C", 0, 1, 1);
 }
 
-static void at_c108_cb(GAtServerRequestType type, GAtResult *result,
-			gpointer user_data)
+static void at_c108_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
 {
-	GAtServer *server = user_data;
 	at_template_cb(type, result, server, &server->v250.c108, "&D", 0, 2, 2);
 }
 
@@ -463,7 +453,7 @@ static void at_command_notify(GAtServer *server, char *command,
 	result.lines = g_slist_prepend(NULL, command);
 	result.final_or_pdu = 0;
 
-	node->notify(type, &result, node->user_data);
+	node->notify(server, type, &result, node->user_data);
 
 	g_slist_free(result.lines);
 }
@@ -479,6 +469,7 @@ static unsigned int parse_extended_command(GAtServer *server, char *buf)
 	char prefix[18]; /* According to V250, 5.4.1 */
 	GAtServerRequestType type;
 	char tmp;
+	unsigned int cmd_start;
 
 	prefix_len = strcspn(buf, separators);
 
@@ -505,6 +496,7 @@ static unsigned int parse_extended_command(GAtServer *server, char *buf)
 		return 0;
 
 	type = G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY;
+	cmd_start = prefix_len;
 
 	/* Continue until we hit eol or ';' */
 	while (buf[i] && !(buf[i] == ';' && in_string == FALSE)) {
@@ -524,6 +516,7 @@ static unsigned int parse_extended_command(GAtServer *server, char *buf)
 				return 0;
 
 			type = G_AT_SERVER_REQUEST_TYPE_QUERY;
+			cmd_start += 1;
 
 			if (seen_equals)
 				type = G_AT_SERVER_REQUEST_TYPE_SUPPORT;
@@ -533,6 +526,7 @@ static unsigned int parse_extended_command(GAtServer *server, char *buf)
 
 			seen_equals = TRUE;
 			type = G_AT_SERVER_REQUEST_TYPE_SET;
+			cmd_start += 1;
 		}
 
 next:
@@ -542,7 +536,7 @@ next:
 	/* We can scratch in this buffer, so mark ';' as null */
 	tmp = buf[i];
 	buf[i] = '\0';
-	at_command_notify(server, buf, prefix, type);
+	at_command_notify(server, buf + cmd_start, prefix, type);
 	buf[i] = tmp;
 
 	/* Also consume the terminating null */
@@ -594,6 +588,7 @@ static unsigned int parse_basic_command(GAtServer *server, char *buf)
 	char prefix[4], tmp;
 	unsigned int i, prefix_size;
 	GAtServerRequestType type;
+	unsigned int cmd_start;
 
 	prefix_size = get_basic_prefix_size(buf);
 	if (prefix_size == 0)
@@ -601,6 +596,7 @@ static unsigned int parse_basic_command(GAtServer *server, char *buf)
 
 	i = prefix_size;
 	prefix[0] = g_ascii_toupper(buf[0]);
+	cmd_start = prefix_size;
 
 	if (prefix[0] == 'D') {
 		type = G_AT_SERVER_REQUEST_TYPE_SET;
@@ -612,6 +608,9 @@ static unsigned int parse_basic_command(GAtServer *server, char *buf)
 		while (buf[i] != '\0' && buf[i] != ';')
 			i += 1;
 
+		if (buf[i] == ';')
+			i += 1;
+
 		goto done;
 	}
 
@@ -621,10 +620,12 @@ static unsigned int parse_basic_command(GAtServer *server, char *buf)
 	if (buf[i] == '=') {
 		seen_equals = TRUE;
 		i += 1;
+		cmd_start += 1;
 	}
 
 	if (buf[i] == '?') {
 		i += 1;
+		cmd_start += 1;
 
 		if (seen_equals)
 			type = G_AT_SERVER_REQUEST_TYPE_SUPPORT;
@@ -648,15 +649,18 @@ done:
 
 		tmp = buf[i];
 		buf[i] = '\0';
-		at_command_notify(server, buf, prefix, type);
+		at_command_notify(server, buf + cmd_start, prefix, type);
 		buf[i] = tmp;
 	} else /* Handle S-parameter with 100+ */
 		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
 
-	/* Commands like ATA, ATZ cause the remainder line
-	 * to be ignored.
+	/*
+	 * Commands like ATA, ATZ cause the remainder linevto be ignored.
+	 * In GSM/UMTS the ATD uses the separator ';' character as a voicecall
+	 * modifier, so we ignore everything coming after that character
+	 * as well.
 	 */
-	if (prefix[0] == 'A' || prefix[0] == 'Z')
+	if (prefix[0] == 'A' || prefix[0] == 'Z' || prefix[0] == 'D')
 		return strlen(buf);
 
 	/* Consume the seperator ';' */
@@ -796,6 +800,7 @@ static char *extract_line(GAtServer *p, struct ring_buffer *rbuf)
 	int line_length = 0;
 	gboolean in_string = FALSE;
 	char s3 = p->v250.s3;
+	char s5 = p->v250.s5;
 	char *line;
 	int i;
 
@@ -837,7 +842,10 @@ static char *extract_line(GAtServer *p, struct ring_buffer *rbuf)
 		if (*buf == '"')
 			in_string = !in_string;
 
-		if ((*buf == ' ' || *buf == '\t') && in_string == FALSE)
+		if (*buf == s5) {
+			if (i != 0)
+				i -= 1;
+		} else if ((*buf == ' ' || *buf == '\t') && in_string == FALSE)
 			; /* Skip */
 		else if (*buf != s3)
 			line[i++] = *buf;
@@ -1060,16 +1068,16 @@ static void at_notify_node_destroy(gpointer data)
 
 static void basic_command_register(GAtServer *server)
 {
-	g_at_server_register(server, "S3", at_s3_cb, server, NULL);
-	g_at_server_register(server, "S4", at_s4_cb, server, NULL);
-	g_at_server_register(server, "S5", at_s5_cb, server, NULL);
-	g_at_server_register(server, "E", at_e_cb, server, NULL);
-	g_at_server_register(server, "Q", at_q_cb, server, NULL);
-	g_at_server_register(server, "V", at_v_cb, server, NULL);
-	g_at_server_register(server, "X", at_x_cb, server, NULL);
-	g_at_server_register(server, "S6", at_s6_cb, server, NULL);
-	g_at_server_register(server, "&C", at_c109_cb, server, NULL);
-	g_at_server_register(server, "&D", at_c108_cb, server, NULL);
+	g_at_server_register(server, "S3", at_s3_cb, NULL, NULL);
+	g_at_server_register(server, "S4", at_s4_cb, NULL, NULL);
+	g_at_server_register(server, "S5", at_s5_cb, NULL, NULL);
+	g_at_server_register(server, "E", at_e_cb, NULL, NULL);
+	g_at_server_register(server, "Q", at_q_cb, NULL, NULL);
+	g_at_server_register(server, "V", at_v_cb, NULL, NULL);
+	g_at_server_register(server, "X", at_x_cb, NULL, NULL);
+	g_at_server_register(server, "S6", at_s6_cb, NULL, NULL);
+	g_at_server_register(server, "&C", at_c109_cb, NULL, NULL);
+	g_at_server_register(server, "&D", at_c108_cb, NULL, NULL);
 }
 
 GAtServer *g_at_server_new(GIOChannel *io)
@@ -1252,7 +1260,7 @@ gboolean g_at_server_set_debug(GAtServer *server, GAtDebugFunc func,
 	return TRUE;
 }
 
-gboolean g_at_server_register(GAtServer *server, char *prefix,
+gboolean g_at_server_register(GAtServer *server, const char *prefix,
 					GAtServerNotifyFunc notify,
 					gpointer user_data,
 					GDestroyNotify destroy_notify)

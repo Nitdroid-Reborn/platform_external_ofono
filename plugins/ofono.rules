@@ -11,6 +11,7 @@ SUBSYSTEMS=="usb", ATTRS{bInterfaceNumber}=="?*", ATTRS{bInterfaceClass}=="ff", 
 ATTRS{idVendor}=="05c6", ATTRS{idProduct}=="9205", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_GOBI_TYPE}="modem"
 
 # Sierra Wireless HSPA Modem
+ATTRS{idVendor}=="1199", ATTRS{idProduct}=="683c", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SIERRA_TYPE}="modem"
 ATTRS{idVendor}=="1199", ATTRS{idProduct}=="6880", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SIERRA_TYPE}="modem"
 ATTRS{idVendor}=="1199", ATTRS{idProduct}=="6890", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SIERRA_TYPE}="modem"
 
@@ -37,7 +38,7 @@ ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1401", ENV{OFONO_IFACE_NUM}=="02", E
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1402", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_HUAWEI_TYPE}="Modem"
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1402", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_HUAWEI_TYPE}="Pcui"
 
-ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1404", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_HUAWEI_TYPE}="Modem"
+ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1404", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_HUAWEI_TYPE}="Modem"
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1404", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_HUAWEI_TYPE}="Pcui"
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1404", ENV{OFONO_HUAWEI_VOICE}="1"
 
@@ -450,5 +451,8 @@ ATTRS{idVendor}=="0421", ATTRS{idProduct}=="0623", ENV{OFONO_DRIVER}="nokia"
 # Nokia CDMA Device
 ATTRS{idVendor}=="0421", ATTRS{idProduct}=="023e", ENV{OFONO_DRIVER}="nokiacdma"
 ATTRS{idVendor}=="0421", ATTRS{idProduct}=="00b6", ENV{OFONO_DRIVER}="nokiacdma"
+
++# Teracom (Linktop/LW27x) 3G Data Card
++ATTRS{idVendor}=="230d", ATTRS{idProduct}=="0001", ENV{OFONO_DRIVER}="linktop"
 
 LABEL="ofono_end"

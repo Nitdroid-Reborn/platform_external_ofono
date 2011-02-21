@@ -44,6 +44,7 @@
 #include <ofono/ussd.h>
 #include <ofono/gprs.h>
 #include <ofono/gprs-context.h>
+#include <ofono/radio-settings.h>
 #include <ofono/log.h>
 
 #include <drivers/atmodem/atutil.h>
@@ -470,13 +471,9 @@ static void mbm_set_online(struct ofono_modem *modem, ofono_bool_t online,
 
 	DBG("modem %p %s", modem, online ? "online" : "offline");
 
-	if (cbd == NULL)
-		goto error;
-
 	if (g_at_chat_send(chat, command, NULL, set_online_cb, cbd, g_free))
 		return;
 
-error:
 	g_free(cbd);
 
 	CALLBACK_WITH_FAILURE(cb, cbd->data);
@@ -504,6 +501,7 @@ static void mbm_post_sim(struct ofono_modem *modem)
 	DBG("%p", modem);
 
 	ofono_stk_create(modem, 0, "mbmmodem", data->modem_port);
+	ofono_radio_settings_create(modem, 0, "stemodem", data->modem_port);
 
 	ofono_sms_create(modem, 0, "atmodem", data->modem_port);
 }

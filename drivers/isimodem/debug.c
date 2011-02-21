@@ -43,6 +43,7 @@ const char *pn_resource_name(int value)
 {
 	switch (value) {
 		_(PN_NETWORK);
+		_(PN_MODEM_NETWORK);
 		_(PN_PHONE_INFO);
 		_(PN_SS);
 		_(PN_CALL);
@@ -163,6 +164,54 @@ const char *mtc_modem_state_name(enum mtc_modem_state value)
 		_(MTC_STATE_NONE);
 	}
 	return "MTC_<UNKNOWN>";
+}
+
+const char *mce_message_id_name(enum mce_message_id value)
+{
+	switch (value) {
+		_(MCE_MODEM_STATE_IND);
+		_(MCE_MODEM_STATE_QUERY_REQ);
+		_(MCE_MODEM_STATE_QUERY_RESP);
+		_(MCE_RF_STATE_REQ);
+		_(MCE_RF_STATE_RESP);
+		_(MCE_RF_STATE_IND);
+		_(MCE_RF_STATE_QUERY_REQ);
+		_(MCE_RF_STATE_QUERY_RESP);
+		_(MCE_POWER_OFF_REQ);
+		_(MCE_POWER_OFF_RESP);
+	}
+	return "MCE_<UNKNOWN>";
+}
+
+const char *mce_modem_state_name(enum mce_modem_state value)
+{
+	switch (value) {
+		_(MCE_NORMAL);
+		_(MCE_LOCAL);
+		_(MCE_SW_RESET);
+		_(MCE_POWER_OFF);
+	}
+	return "MCE_<UNKNOWN>";
+}
+
+const char *mce_status_info(enum mce_status_info value)
+{
+	switch (value) {
+		_(MCE_OK);
+		_(MCE_FAIL);
+		_(MCE_ALREADY_ACTIVE);
+		_(MCE_TRANSITION_ONGOING);
+	}
+	return "MCE_<UNKNOWN>";
+}
+
+const char *mce_rf_state_name(enum mce_rf_state value)
+{
+	switch (value) {
+		_(MCE_RF_OFF);
+		_(MCE_RF_ON);
+	}
+	return "MCE_RF<UNKNOWN>";
 }
 
 const char *sms_isi_cause_name(enum sms_isi_cause value)
@@ -757,6 +806,11 @@ const char *net_status_name(enum net_reg_status value)
 const char *net_message_id_name(enum net_message_id value)
 {
 	switch (value) {
+		_(NET_MODEM_REG_STATUS_GET_REQ);
+		_(NET_MODEM_REG_STATUS_GET_RESP);
+		_(NET_MODEM_REG_STATUS_IND);
+		_(NET_MODEM_AVAILABLE_GET_REQ);
+		_(NET_MODEM_AVAILABLE_GET_RESP);
 		_(NET_SET_REQ);
 		_(NET_SET_RESP);
 		_(NET_RSSI_GET_REQ);
@@ -766,6 +820,10 @@ const char *net_message_id_name(enum net_message_id value)
 		_(NET_RAT_IND);
 		_(NET_RAT_REQ);
 		_(NET_RAT_RESP);
+		_(NET_CELL_INFO_GET_REQ);
+		_(NET_CELL_INFO_GET_RESP);
+		_(NET_CELL_INFO_IND);
+		_(NET_NITZ_NAME_IND);
 		_(NET_REG_STATUS_GET_REQ);
 		_(NET_REG_STATUS_GET_RESP);
 		_(NET_REG_STATUS_IND);
@@ -782,6 +840,7 @@ const char *net_subblock_name(enum net_subblock value)
 {
 	switch (value) {
 		_(NET_REG_INFO_COMMON);
+		_(NET_MODEM_AVAIL_NETWORK_INFO_COMMON);
 		_(NET_OPERATOR_INFO_COMMON);
 		_(NET_RSSI_CURRENT);
 		_(NET_GSM_REG_INFO);
@@ -790,6 +849,10 @@ const char *net_subblock_name(enum net_subblock value)
 		_(NET_TIME_INFO);
 		_(NET_GSM_BAND_INFO);
 		_(NET_RAT_INFO);
+		_(NET_GSM_CELL_INFO);
+		_(NET_WCDMA_CELL_INFO);
+		_(NET_FULL_NITZ_NAME);
+		_(NET_SHORT_NITZ_NAME);
 		_(NET_AVAIL_NETWORK_INFO_COMMON);
 		_(NET_OPER_NAME_INFO);
 	}

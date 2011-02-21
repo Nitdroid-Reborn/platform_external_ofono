@@ -32,6 +32,10 @@
 extern "C" {
 #endif
 
+enum GIsiModemFlags {
+	GISI_MODEM_FLAG_USE_LEGACY_SUBSCRIBE = 1,
+};
+
 struct _GIsiModem;
 typedef struct _GIsiModem GIsiModem;
 
@@ -44,11 +48,20 @@ typedef void (*GIsiDebugFunc)(const char *fmt, ...);
 GIsiModem *g_isi_modem_create(unsigned index);
 GIsiModem *g_isi_modem_create_by_name(const char *name);
 void g_isi_modem_destroy(GIsiModem *modem);
+
 unsigned g_isi_modem_index(GIsiModem *modem);
+
+uint8_t g_isi_modem_device(GIsiModem *modem);
+int g_isi_modem_set_device(GIsiModem *modem, uint8_t dev);
+
 void g_isi_modem_set_trace(GIsiModem *modem, GIsiNotifyFunc notify);
 void g_isi_modem_set_debug(GIsiModem *modem, GIsiDebugFunc debug);
+
 void *g_isi_modem_set_userdata(GIsiModem *modem, void *data);
 void *g_isi_modem_get_userdata(GIsiModem *modem);
+
+unsigned long g_isi_modem_flags(GIsiModem *modem);
+void g_isi_modem_set_flags(GIsiModem *modem, unsigned long flags);
 
 GIsiPending *g_isi_request_send(GIsiModem *modem, uint8_t resource,
 					const void *__restrict buf, size_t len,

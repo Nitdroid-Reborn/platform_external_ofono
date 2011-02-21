@@ -1,3 +1,30 @@
+ver 0.43:
+	Fix issue with PPP transmit ACCM and receive ACCM mixup.
+	Fix issue with PPP not using default ACCM in transmit.
+	Fix issue with PPP interface and EM770W modem.
+	Add support for basic modem emulator interfaces.
+	Add support for handling ATS5 command feature.
+	Add support for Linktop LW27x data cards.
+
+ver 0.42:
+	Fix issue with ECT pre-conditions check.
+	Add support for watching SIM file changes.
+	Add support for using SIM codes longer than 8 digits.
+	Add support for SPN handling with GPRS provisioning.
+	Add support for better handling COLP with IFX modem.
+	Add support for CNAP handling with IFX modem.
+	Remove support for +CSSI type SS notifications.
+
+ver 0.41:
+	Fix issue with SIM callback handling.
+	Fix issue with XTMS handling and IFX modem.
+	Add support for alphabets and SMS encoding.
+	Add support for generic PIN retries handling.
+	Add support for PIN retries and MBM modem.
+	Add support for radio settings and MBM modem.
+	Add support for cell broadcast and STE modem.
+	Add support for handling ECAV status Released.
+
 ver 0.40:
 	Fix issue with MessageCenter and MessageProxy settings.
 	Fix issue with voice call support and Calypso modem.

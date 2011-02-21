@@ -106,7 +106,7 @@ static GAtChat *open_device(struct ofono_modem *modem,
 	if (channel == NULL)
 		return NULL;
 
-	syntax = g_at_syntax_new_gsmv1();
+	syntax = g_at_syntax_new_gsm_permissive();
 	chat = g_at_chat_new(channel, syntax);
 	g_at_syntax_unref(syntax);
 	g_io_channel_unref(channel);
@@ -251,7 +251,7 @@ static void gobi_set_online(struct ofono_modem *modem, ofono_bool_t online,
 
 	DBG("modem %p %s", modem, online ? "online" : "offline");
 
-	if (cbd == NULL || data->chat == NULL)
+	if (data->chat == NULL)
 		goto error;
 
 	if (g_at_chat_send(data->chat, command, NULL,
@@ -307,10 +307,10 @@ static struct ofono_modem_driver gobi_driver = {
 	.remove		= gobi_remove,
 	.enable		= gobi_enable,
 	.disable	= gobi_disable,
-	.set_online     = gobi_set_online,
+	.set_online	= gobi_set_online,
 	.pre_sim	= gobi_pre_sim,
 	.post_sim	= gobi_post_sim,
-	.post_online    = gobi_post_online,
+	.post_online	= gobi_post_online,
 };
 
 static int gobi_init(void)

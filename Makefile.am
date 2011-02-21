@@ -14,13 +14,16 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
 			include/audio-settings.h include/nettime.h \
 			include/ctm.h include/cdma-voicecall.h \
 			include/cdma-sms.h include/sim-auth.h \
-			include/gprs-provision.h
+			include/gprs-provision.h include/emulator.h
 
 nodist_pkginclude_HEADERS = include/version.h
 
 local_headers = $(foreach file,$(pkginclude_HEADERS) \
 				$(nodist_pkginclude_HEADERS), \
 					include/ofono/$(notdir $(file)))
+
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = ofono.pc
 
 
 if DATAFILES
@@ -317,13 +320,23 @@ builtin_sources += plugins/nokia.c
 builtin_modules += nokiacdma
 builtin_sources += plugins/nokiacdma.c
 
+builtin_modules += linktop
+builtin_sources += plugins/linktop.c
+
 if BLUETOOTH
 builtin_modules += bluetooth
 builtin_sources += plugins/bluetooth.c plugins/bluetooth.h
 
 builtin_modules += hfp
-builtin_sources += plugins/hfp.c plugins/bluetooth.h
+builtin_sources += plugins/hfp_hf.c plugins/bluetooth.h
 
+builtin_modules += hfp_ag
+builtin_sources += plugins/hfp_ag.c plugins/bluetooth.h
+
+builtin_modules += dun_gw
+builtin_sources += plugins/dun_gw.c plugins/bluetooth.h
+
+builtin_sources += $(btio_sources)
 builtin_cflags += @BLUEZ_CFLAGS@
 builtin_libadd += @BLUEZ_LIBS@
 endif
@@ -338,6 +351,9 @@ builtin_sources += examples/nettime.c
 
 builtin_modules += example_provision
 builtin_sources += examples/provision.c
+
+builtin_modules += example_emulator
+builtin_sources += examples/emulator.c
 endif
 
 builtin_modules += smart_messaging
@@ -365,7 +381,8 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
 			src/simfs.c src/simfs.h src/audio-settings.c \
 			src/smsagent.c src/smsagent.h src/ctm.c \
 			src/cdma-voicecall.c src/sim-auth.c \
-			src/message.h src/message.c src/gprs-provision.c
+			src/message.h src/message.c src/gprs-provision.c \
+			src/emulator.c
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -481,7 +498,8 @@ test_scripts = test/backtrace \
 		test/cdma-dial-number \
 		test/cdma-hangup \
 		test/disable-call-forwarding \
-		test/list-messages
+		test/list-messages \
+		test/test-sms
 
 if TEST
 testdir = $(pkglibdir)/test
@@ -568,7 +586,7 @@ MAINTAINERCLEANFILES = Makefile.in \
 
 src/plugin.$(OBJEXT): src/builtin.h
 
-src/builtin.h: src/genbuiltin $(builtin_sources)
+src/builtin.h: src/genbuiltin config.status
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
 plugins/%.rules:

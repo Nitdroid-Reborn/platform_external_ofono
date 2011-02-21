@@ -215,7 +215,7 @@ static void sca_query_resp_cb(const GIsiMessage *msg, void *data)
 	memcpy(sd->params.alpha, info->alpha, sizeof(sd->params.alpha));
 
 	/*
-	 * Bitmask indicating absense of parameters --
+	 * Bitmask indicating absence of parameters --
 	 * If second bit is set it indicates that the SCA is absent
 	 */
 	if (info->absent & 0x2)
@@ -248,7 +248,7 @@ static void isi_sca_query(struct ofono_sms *sms,
 		1,	/* Location, default is 1 */
 	};
 
-	if (cbd == NULL || sd == NULL)
+	if (cbd == NULL || sd == NULL || sd->sim == NULL)
 		goto error;
 
 	if (g_isi_client_send(sd->sim, msg, sizeof(msg),

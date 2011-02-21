@@ -77,6 +77,7 @@ struct ofono_modem {
 	guint			timeout;
 	ofono_bool_t		online;
 	struct ofono_watchlist	*online_watches;
+	struct ofono_watchlist	*powered_watches;
 	GHashTable		*properties;
 	struct ofono_sim	*sim;
 	unsigned int		sim_watch;
@@ -92,6 +93,7 @@ struct ofono_devinfo {
 	char *model;
 	char *revision;
 	char *serial;
+	unsigned int dun_watch;
 	const struct ofono_devinfo_driver *driver;
 	void *driver_data;
 	struct ofono_atom *atom;
@@ -121,7 +123,7 @@ unsigned int __ofono_modem_callid_next(struct ofono_modem *modem)
 	unsigned int i;
 
 	for (i = 1; i < sizeof(modem->call_ids) * 8; i++) {
-		if (modem->call_ids & (0x1 << i))
+		if (modem->call_ids & (1 << i))
 			continue;
 
 		return i;
@@ -132,12 +134,12 @@ unsigned int __ofono_modem_callid_next(struct ofono_modem *modem)
 
 void __ofono_modem_callid_hold(struct ofono_modem *modem, int id)
 {
-	modem->call_ids |= (0x1 << id);
+	modem->call_ids |= (1 << id);
 }
 
 void __ofono_modem_callid_release(struct ofono_modem *modem, int id)
 {
-	modem->call_ids &= ~(0x1 << id);
+	modem->call_ids &= ~(1 << id);
 }
 
 void ofono_modem_set_data(struct ofono_modem *modem, void *data)
@@ -183,6 +185,20 @@ struct ofono_atom *__ofono_modem_add_atom(struct ofono_modem *modem,
 	atom->modem = modem;
 
 	modem->atoms = g_slist_prepend(modem->atoms, atom);
+
+	return atom;
+}
+
+struct ofono_atom *__ofono_modem_add_atom_offline(struct ofono_modem *modem,
+					enum ofono_atom_type type,
+					void (*destruct)(struct ofono_atom *),
+					void *data)
+{
+	struct ofono_atom *atom;
+
+	atom = __ofono_modem_add_atom(modem, type, destruct, data);
+
+	atom->modem_state = MODEM_STATE_OFFLINE;
 
 	return atom;
 }
@@ -379,7 +395,23 @@ static void notify_online_watches(struct ofono_modem *modem)
 	for (l = modem->online_watches->items; l; l = l->next) {
 		item = l->data;
 		notify = item->notify;
-		notify(modem->online, item->notify_data);
+		notify(modem, modem->online, item->notify_data);
+	}
+}
+
+static void notify_powered_watches(struct ofono_modem *modem)
+{
+	struct ofono_watchlist_item *item;
+	GSList *l;
+	ofono_modem_powered_notify_func notify;
+
+	if (modem->powered_watches == NULL)
+		return;
+
+	for (l = modem->powered_watches->items; l; l = l->next) {
+		item = l->data;
+		notify = item->notify;
+		notify(modem, modem->powered, item->notify_data);
 	}
 }
 
@@ -460,6 +492,30 @@ void __ofono_modem_remove_online_watch(struct ofono_modem *modem,
 					unsigned int id)
 {
 	__ofono_watchlist_remove_item(modem->online_watches, id);
+}
+
+unsigned int __ofono_modem_add_powered_watch(struct ofono_modem *modem,
+					ofono_modem_powered_notify_func notify,
+					void *data, ofono_destroy_func destroy)
+{
+	struct ofono_watchlist_item *item;
+
+	if (modem == NULL || notify == NULL)
+		return 0;
+
+	item = g_new0(struct ofono_watchlist_item, 1);
+
+	item->notify = notify;
+	item->destroy = destroy;
+	item->notify_data = data;
+
+	return __ofono_watchlist_add_item(modem->powered_watches, item);
+}
+
+void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
+					unsigned int id)
+{
+	__ofono_watchlist_remove_item(modem->powered_watches, id);
 }
 
 static void common_online_cb(const struct ofono_error *error, void *data)
@@ -718,9 +774,10 @@ static int set_powered(struct ofono_modem *modem, ofono_bool_t powered)
 			err = driver->disable(modem);
 	}
 
-	if (err == 0)
+	if (err == 0) {
 		modem->powered = powered;
-	else if (err != -EINPROGRESS)
+		notify_powered_watches(modem);
+	} else if (err != -EINPROGRESS)
 		modem->powered_pending = modem->powered;
 
 	return err;
@@ -754,6 +811,8 @@ static gboolean set_powered_timeout(gpointer user)
 		dbus_bool_t powered = FALSE;
 
 		modem->powered = FALSE;
+		notify_powered_watches(modem);
+
 		ofono_dbus_signal_property_changed(conn, modem->path,
 						OFONO_MODEM_INTERFACE,
 						"Powered", DBUS_TYPE_BOOLEAN,
@@ -991,6 +1050,7 @@ void ofono_modem_set_powered(struct ofono_modem *modem, ofono_bool_t powered)
 		goto out;
 
 	modem->powered = powered;
+	notify_powered_watches(modem);
 
 	if (modem->lockdown)
 		ofono_dbus_signal_property_changed(conn, modem->path,
@@ -1276,6 +1336,70 @@ static gboolean query_manufacturer(gpointer user)
 	return FALSE;
 }
 
+static void attr_template(struct ofono_emulator *em,
+				struct ofono_emulator_request *req,
+				const char *attr)
+{
+	struct ofono_error result;
+
+	if (attr == NULL)
+		attr = "Unknown";
+
+	result.error = 0;
+
+	switch (ofono_emulator_request_get_type(req)) {
+	case OFONO_EMULATOR_REQUEST_TYPE_COMMAND_ONLY:
+		ofono_emulator_send_info(em, attr, TRUE);
+		result.type = OFONO_ERROR_TYPE_NO_ERROR;
+		ofono_emulator_send_final(em, &result);
+		break;
+	case OFONO_EMULATOR_REQUEST_TYPE_SUPPORT:
+		result.type = OFONO_ERROR_TYPE_NO_ERROR;
+		ofono_emulator_send_final(em, &result);
+		break;
+	default:
+		result.type = OFONO_ERROR_TYPE_FAILURE;
+		ofono_emulator_send_final(em, &result);
+	};
+}
+
+static void gmi_cb(struct ofono_emulator *em,
+			struct ofono_emulator_request *req, void *userdata)
+{
+	struct ofono_devinfo *info = userdata;
+
+	attr_template(em, req, info->manufacturer);
+}
+
+static void gmm_cb(struct ofono_emulator *em,
+			struct ofono_emulator_request *req, void *userdata)
+{
+	struct ofono_devinfo *info = userdata;
+
+	attr_template(em, req, info->model);
+}
+
+static void gmr_cb(struct ofono_emulator *em,
+			struct ofono_emulator_request *req, void *userdata)
+{
+	struct ofono_devinfo *info = userdata;
+
+	attr_template(em, req, info->revision);
+}
+
+static void dun_watch(struct ofono_atom *atom,
+			enum ofono_atom_watch_condition cond, void *data)
+{
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	if (cond == OFONO_ATOM_WATCH_CONDITION_UNREGISTERED)
+		return;
+
+	ofono_emulator_add_handler(em, "+GMI", gmi_cb, data, NULL);
+	ofono_emulator_add_handler(em, "+GMM", gmm_cb, data, NULL);
+	ofono_emulator_add_handler(em, "+GMR", gmr_cb, data, NULL);
+}
+
 int ofono_devinfo_driver_register(const struct ofono_devinfo_driver *d)
 {
 	DBG("driver: %p, name: %s", d, d->name);
@@ -1348,6 +1472,19 @@ struct ofono_devinfo *ofono_devinfo_create(struct ofono_modem *modem,
 
 void ofono_devinfo_register(struct ofono_devinfo *info)
 {
+	struct ofono_modem *modem = __ofono_atom_get_modem(info->atom);
+	struct ofono_atom *dun_atom;
+
+	info->dun_watch = __ofono_modem_add_atom_watch(modem,
+						OFONO_ATOM_TYPE_EMULATOR_DUN,
+						dun_watch, info, NULL);
+
+	dun_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_EMULATOR_DUN);
+
+	if (dun_atom && __ofono_atom_get_registered(dun_atom))
+		dun_watch(dun_atom, OFONO_ATOM_WATCH_CONDITION_REGISTERED,
+				info);
+
 	query_manufacturer(info);
 }
 
@@ -1699,6 +1836,7 @@ int ofono_modem_register(struct ofono_modem *modem)
 
 	modem->atom_watches = __ofono_watchlist_new(g_free);
 	modem->online_watches = __ofono_watchlist_new(g_free);
+	modem->powered_watches = __ofono_watchlist_new(g_free);
 
 	emit_modem_added(modem);
 	call_modemwatches(modem, TRUE);
@@ -1732,6 +1870,9 @@ static void modem_unregister(struct ofono_modem *modem)
 
 	__ofono_watchlist_free(modem->online_watches);
 	modem->online_watches = NULL;
+
+	__ofono_watchlist_free(modem->powered_watches);
+	modem->powered_watches = NULL;
 
 	modem->sim_watch = 0;
 	modem->sim_ready_watch = 0;

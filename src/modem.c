@@ -1395,9 +1395,11 @@ static void dun_watch(struct ofono_atom *atom,
 	if (cond == OFONO_ATOM_WATCH_CONDITION_UNREGISTERED)
 		return;
 
+#if defined(_EMULATOR_)
 	ofono_emulator_add_handler(em, "+GMI", gmi_cb, data, NULL);
 	ofono_emulator_add_handler(em, "+GMM", gmm_cb, data, NULL);
 	ofono_emulator_add_handler(em, "+GMR", gmr_cb, data, NULL);
+#endif
 }
 
 int ofono_devinfo_driver_register(const struct ofono_devinfo_driver *d)

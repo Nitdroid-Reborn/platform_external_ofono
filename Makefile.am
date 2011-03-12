@@ -14,7 +14,8 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
 			include/audio-settings.h include/nettime.h \
 			include/ctm.h include/cdma-voicecall.h \
 			include/cdma-sms.h include/sim-auth.h \
-			include/gprs-provision.h include/emulator.h
+			include/gprs-provision.h include/emulator.h \
+			include/location-reporting.h
 
 nodist_pkginclude_HEADERS = include/version.h
 
@@ -144,13 +145,19 @@ builtin_sources += $(gisi_sources) \
 				drivers/isimodem/gprs.c \
 				drivers/isimodem/gprs-context.c \
 				drivers/isimodem/gpds.h \
-				drivers/isimodem/audio-settings.c
+				drivers/isimodem/audio-settings.c \
+				drivers/isimodem/uicc.h
+
 
 builtin_modules += isiusb
 builtin_sources += plugins/isiusb.c
 
 builtin_modules += n900
 builtin_sources += plugins/n900.c plugins/nokia-gpio.h plugins/nokia-gpio.c
+
+builtin_modules += u8500
+builtin_sources += plugins/u8500.c
+endif
 
 if ATMODEM
 builtin_modules += atmodem
@@ -217,7 +224,8 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/mbmmodem/mbmmodem.h \
 			drivers/mbmmodem/mbmmodem.c \
 			drivers/mbmmodem/gprs-context.c \
-			drivers/mbmmodem/stk.c
+			drivers/mbmmodem/stk.c \
+			drivers/mbmmodem/location-reporting.c
 
 builtin_modules += hsomodem
 builtin_sources += drivers/atmodem/atutil.h \
@@ -382,7 +390,7 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
 			src/smsagent.c src/smsagent.h src/ctm.c \
 			src/cdma-voicecall.c src/sim-auth.c \
 			src/message.h src/message.c src/gprs-provision.c \
-			src/emulator.c
+			src/emulator.c src/location-reporting.c
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -424,7 +432,8 @@ doc_files = doc/overview.txt doc/ofono-paper.txt doc/release-faq.txt \
 			doc/phonebook-api.txt doc/radio-settings-api.txt \
 			doc/sim-api.txt doc/stk-api.txt \
 			doc/audio-settings-api.txt doc/text-telephony-api.txt \
-			doc/calypso-modem.txt doc/message-api.txt
+			doc/calypso-modem.txt doc/message-api.txt \
+			doc/location-reporting-api.txt
 
 
 test_scripts = test/backtrace \
@@ -556,13 +565,16 @@ unit_test_caif_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_caif_OBJECTS)
 
 if TOOLS
-noinst_PROGRAMS += tools/huawei-audio tools/auto-enable
+noinst_PROGRAMS += tools/huawei-audio tools/auto-enable tools/get-location
 
 tools_huawei_audio_SOURCES = $(gdbus_sources) tools/huawei-audio.c
 tools_huawei_audio_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 
 tools_auto_enable_SOURCES = $(gdbus_sources) tools/auto-enable.c
 tools_auto_enable_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
+
+tools_get_location_SOURCES = tools/get-location.c
+tools_get_location_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 endif
 
 noinst_PROGRAMS += gatchat/gsmdial gatchat/test-server gatchat/test-qcdm

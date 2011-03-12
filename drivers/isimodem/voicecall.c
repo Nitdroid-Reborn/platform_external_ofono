@@ -56,8 +56,10 @@ struct isi_call {
 	uint8_t cause;
 	uint8_t addr_type;
 	uint8_t presentation;
+	uint8_t name_presentation;
 	uint8_t reason;
 	char address[20];
+	char name[20];
 	char addr_pad[4];
 };
 
@@ -210,10 +212,16 @@ static void isi_call_any_address_sb_proc(struct isi_voicecall *ivc,
 	uint8_t len;
 	char *addr;
 
-	if (!g_isi_sb_iter_get_byte(sb, &type, 2) ||
-			!g_isi_sb_iter_get_byte(sb, &pres, 3) ||
-			!g_isi_sb_iter_get_byte(sb, &len, 5) ||
-			!g_isi_sb_iter_get_alpha_tag(sb, &addr, 2 * len, 6))
+	if (!g_isi_sb_iter_get_byte(sb, &type, 2))
+		return;
+
+	if (!g_isi_sb_iter_get_byte(sb, &pres, 3))
+		return;
+
+	if (!g_isi_sb_iter_get_byte(sb, &len, 5))
+		return;
+
+	if (!g_isi_sb_iter_get_alpha_tag(sb, &addr, 2 * len, 6))
 		return;
 
 	call->addr_type = type | 0x80;
@@ -237,6 +245,34 @@ static void isi_call_destination_address_sb_proc(struct isi_voicecall *ivc,
 {
 	if (call->address[0] == '\0')
 		isi_call_any_address_sb_proc(ivc, call, sb);
+}
+
+static void isi_call_origin_info_sb_proc(struct isi_voicecall *ivc,
+						struct isi_call *call,
+						GIsiSubBlockIter *sb)
+{
+	uint8_t pres;
+	uint8_t id;
+	uint8_t len;
+	char *name;
+
+	if (!g_isi_sb_iter_get_byte(sb, &pres, 2))
+		return;
+
+	if (!g_isi_sb_iter_get_byte(sb, &id, 6))
+		return;
+
+	if (!g_isi_sb_iter_get_byte(sb, &len, 7))
+		return;
+
+	if (!g_isi_sb_iter_get_alpha_tag(sb, &name, 2 * len, 8))
+		return;
+
+	DBG("Got name %s", name);
+	call->name_presentation = pres;
+	strncpy(call->name, name, sizeof(call->name));
+
+	g_free(name);
 }
 
 static void isi_call_mode_sb_proc(struct isi_voicecall *ivc,
@@ -396,12 +432,17 @@ static struct ofono_call isi_call_as_ofono_call(const struct isi_call *call)
 	ocall.status = isi_call_status_to_clcc(call);
 
 	memcpy(number->number, call->address, sizeof(number->number));
+	memcpy(ocall.name, call->name, sizeof(ocall.name));
 
 	number->type = 0x80 | call->addr_type;
 	ocall.clip_validity = call->presentation & 3;
+	ocall.cnap_validity = call->name_presentation & 3;
 
 	if (ocall.clip_validity == 0 && strlen(number->number) == 0)
 		ocall.clip_validity = 2;
+
+	if (ocall.cnap_validity == 0 && strlen(call->name) == 0)
+		ocall.cnap_validity = 2;
 
 	return ocall;
 }
@@ -513,11 +554,12 @@ static void isi_call_notify(struct ofono_voicecall *ovc, struct isi_call *call)
 
 	ocall = isi_call_as_ofono_call(call);
 
-	DBG("id=%u,%s,%u,\"%s\",%u,%u",
+	DBG("id=%u,%s,%u,\"%s\",\"%s\",%u,%u",
 		ocall.id,
 		ocall.direction ? "terminated" : "originated",
 		ocall.status,
 		ocall.phone_number.number,
+		ocall.name,
 		ocall.phone_number.type,
 		ocall.clip_validity);
 
@@ -620,6 +662,10 @@ static void isi_call_status_ind_cb(const GIsiMessage *msg, void *data)
 
 		case CALL_ORIGIN_ADDRESS:
 			isi_call_origin_address_sb_proc(ivc, call, &iter);
+			break;
+
+		case CALL_ORIGIN_INFO:
+			isi_call_origin_info_sb_proc(ivc, call, &iter);
 			break;
 
 		case CALL_GSM_DETAILED_CAUSE:

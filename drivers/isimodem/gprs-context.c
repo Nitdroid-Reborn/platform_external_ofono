@@ -368,14 +368,14 @@ static void send_context_authenticate(GIsiClient *client, void *opaque)
 
 	const uint8_t bottom[] = {
 		GPDS_PASSWORD_INFO,
-		3 + password_len + 3,
+		sb_password_info_len,
 		password_len,
 		/* Password goes here */
 		/* Possible padding goes here */
 	};
 
 	const struct iovec iov[6] = {
-		{ (uint8_t *) top, sizeof(top) },
+		{ (uint8_t *)top, sizeof(top) },
 		{ cd->username, username_len },
 		{ userinfo_pad, sizeof(userinfo_pad) },
 		{ (uint8_t *)bottom, sizeof(bottom) },

@@ -74,6 +74,8 @@ struct _GAtPPP {
 	GAtPPPDisconnectReason disconnect_reason;
 	GAtDebugFunc debugf;
 	gpointer debug_data;
+	gboolean sta_pending;
+	guint ppp_dead_source;
 };
 
 void ppp_debug(GAtPPP *ppp, const char *str)
@@ -82,6 +84,34 @@ void ppp_debug(GAtPPP *ppp, const char *str)
 		return;
 
 	ppp->debugf(str, ppp->debug_data);
+}
+
+static gboolean ppp_dead(gpointer userdata)
+{
+	GAtPPP *ppp = userdata;
+
+	DBG(ppp, "");
+
+	ppp->ppp_dead_source = 0;
+
+	/* notify interested parties */
+	if (ppp->disconnect_cb)
+		ppp->disconnect_cb(ppp->disconnect_reason,
+					ppp->disconnect_data);
+
+	return FALSE;
+}
+
+static void sta_sent(gpointer userdata)
+{
+	GAtPPP *ppp = userdata;
+
+	DBG(ppp, "");
+
+	ppp->sta_pending = FALSE;
+
+	if (ppp->phase == PPP_PHASE_DEAD)
+		ppp_dead(ppp);
 }
 
 struct ppp_header *ppp_packet_new(gsize infolen, guint16 protocol)
@@ -171,6 +201,7 @@ void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
 	guint8 code;
 	gboolean lcp = (proto == LCP_PROTOCOL);
 	guint32 xmit_accm = 0;
+	gboolean sta = FALSE;
 
 	/*
 	 * all LCP Link Configuration, Link Termination, and Code-Reject
@@ -179,6 +210,15 @@ void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
 	if (lcp) {
 		code = pppcp_get_code(packet);
 		lcp = code > 0 && code < 8;
+
+		/*
+		 * If we're going down, we try to make sure to send the final
+		 * ack before informing the upper layers via the ppp_disconnect
+		 * function.  Once we enter PPP_DEAD phase, no further packets
+		 * will be sent
+		 */
+		if (code == PPPCP_CODE_TYPE_TERMINATE_ACK)
+			sta = TRUE;
 	}
 
 	if (lcp) {
@@ -190,28 +230,27 @@ void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
 	header->control = PPP_CTRL;
 
 	if (g_at_hdlc_send(ppp->hdlc, packet,
-			infolen + sizeof(*header)) == FALSE)
-		g_print("Failed to send a frame\n");
+			infolen + sizeof(*header)) == TRUE) {
+		if (sta) {
+			GAtIO *io = g_at_hdlc_get_io(ppp->hdlc);
+
+			ppp->sta_pending = TRUE;
+			g_at_io_set_write_done(io, sta_sent, ppp);
+		}
+	} else
+		DBG(ppp, "Failed to send a frame\n");
 
 	if (lcp)
 		g_at_hdlc_set_xmit_accm(ppp->hdlc, xmit_accm);
 }
 
-static void ppp_dead(GAtPPP *ppp)
-{
-	/* notify interested parties */
-	if (ppp->disconnect_cb)
-		ppp->disconnect_cb(ppp->disconnect_reason,
-					ppp->disconnect_data);
-}
-
 static inline void ppp_enter_phase(GAtPPP *ppp, enum ppp_phase phase)
 {
-	g_print("Entering new phase: %d\n", phase);
+	DBG(ppp, "%d", phase);
 	ppp->phase = phase;
 
-	if (phase == PPP_PHASE_DEAD)
-		ppp_dead(ppp);
+	if (phase == PPP_PHASE_DEAD && ppp->sta_pending == FALSE)
+		ppp->ppp_dead_source = g_idle_add(ppp_dead, ppp);
 }
 
 void ppp_set_auth(GAtPPP *ppp, const guint8* auth_data)
@@ -226,7 +265,7 @@ void ppp_set_auth(GAtPPP *ppp, const guint8* auth_data)
 		ppp->chap = ppp_chap_new(ppp, auth_data[2]);
 		break;
 	default:
-		g_printerr("unknown authentication proto\n");
+		DBG(ppp, "unknown authentication proto");
 		break;
 	}
 }
@@ -258,7 +297,7 @@ void ppp_ipcp_up_notify(GAtPPP *ppp, const char *local, const char *peer,
 	}
 
 	if (ppp_net_set_mtu(ppp->net, ppp->mtu) == FALSE)
-		g_printerr("Unable to set MTU\n");
+		DBG(ppp, "Unable to set MTU");
 
 	ppp_enter_phase(ppp, PPP_PHASE_LINK_UP);
 
@@ -466,6 +505,11 @@ void g_at_ppp_unref(GAtPPP *ppp)
 	lcp_free(ppp->lcp);
 	ipcp_free(ppp->ipcp);
 
+	if (ppp->ppp_dead_source) {
+		g_source_remove(ppp->ppp_dead_source);
+		ppp->ppp_dead_source = 0;
+	}
+
 	g_at_hdlc_unref(ppp->hdlc);
 
 	g_free(ppp);
@@ -507,6 +551,7 @@ static GAtPPP *ppp_init_common(GAtHDLC *hdlc, gboolean is_server, guint32 ip)
 	/* initialize IPCP state */
 	ppp->ipcp = ipcp_new(ppp, is_server, ip);
 
+	g_at_hdlc_set_no_carrier_detect(ppp->hdlc, TRUE);
 	g_at_hdlc_set_receive(ppp->hdlc, ppp_receive, ppp);
 	g_at_io_set_disconnect_function(g_at_hdlc_get_io(ppp->hdlc),
 						io_disconnect, ppp);

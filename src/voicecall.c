@@ -1951,8 +1951,9 @@ void ofono_voicecall_notify(struct ofono_voicecall *vc,
 	struct ofono_call *newcall;
 
 	DBG("Got a voicecall event, status: %d, id: %u, number: %s"
-			" called_number: %s", call->status, call->id,
-			call->phone_number.number, call->called_number.number);
+			" called_number: %s, called_name %s", call->status,
+			call->id, call->phone_number.number,
+			call->called_number.number, call->name);
 
 	l = g_slist_find_custom(vc->call_list, GUINT_TO_POINTER(call->id),
 				call_compare_by_id);
@@ -2279,6 +2280,19 @@ struct ofono_voicecall *ofono_voicecall_create(struct ofono_modem *modem,
 	return vc;
 }
 
+static void read_ecc_numbers(int id, void *userdata)
+{
+	struct ofono_voicecall *vc = userdata;
+
+	/* Try both formats, only one or none will work */
+	ofono_sim_read(vc->sim_context, SIM_EFECC_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			ecc_g2_read_cb, vc);
+	ofono_sim_read(vc->sim_context, SIM_EFECC_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_FIXED,
+			ecc_g3_read_cb, vc);
+}
+
 static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 {
 	struct ofono_voicecall *vc = user;
@@ -2288,13 +2302,10 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 		if (vc->sim_context == NULL)
 			vc->sim_context = ofono_sim_context_create(vc->sim);
 
-		/* Try both formats, only one or none will work */
-		ofono_sim_read(vc->sim_context, SIM_EFECC_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-				ecc_g2_read_cb, vc);
-		ofono_sim_read(vc->sim_context, SIM_EFECC_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_FIXED,
-				ecc_g3_read_cb, vc);
+		read_ecc_numbers(SIM_EFECC_FILEID, vc);
+
+		ofono_sim_add_file_watch(vc->sim_context, SIM_EFECC_FILEID,
+						read_ecc_numbers, vc, NULL);
 		break;
 	case OFONO_SIM_STATE_NOT_PRESENT:
 		/* TODO: Must release all non-emergency calls */

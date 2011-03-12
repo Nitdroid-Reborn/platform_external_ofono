@@ -65,6 +65,7 @@ struct _GAtHDLC {
 	int record_fd;
 	gboolean in_read_handler;
 	gboolean destroyed;
+	gboolean no_carrier_detect;
 };
 
 static void hdlc_record(int fd, gboolean in, guint8 *data, guint16 length)
@@ -140,6 +141,16 @@ static void new_bytes(struct ring_buffer *rbuf, gpointer user_data)
 	hdlc->in_read_handler = TRUE;
 
 	while (pos < len) {
+		/*
+		 * We try to detect NO CARRIER conditions here.  We
+		 * (ab) use the fact that a HDLC_FLAG must be followed
+		 * by the Address or Protocol fields, depending on whether
+		 * ACFC is enabled.
+		 */
+		if (hdlc->no_carrier_detect &&
+				hdlc->decode_offset == 0 && *buf == '\r')
+			break;
+
 		if (hdlc->decode_escape == TRUE) {
 			unsigned char val = *buf ^ HDLC_TRANS;
 
@@ -177,9 +188,9 @@ static void new_bytes(struct ring_buffer *rbuf, gpointer user_data)
 		}
 	}
 
+out:
 	ring_buffer_drain(rbuf, pos);
 
-out:
 	hdlc->in_read_handler = FALSE;
 
 	if (hdlc->destroyed)
@@ -276,6 +287,9 @@ void g_at_hdlc_unref(GAtHDLC *hdlc)
 		close(hdlc->record_fd);
 		hdlc->record_fd = -1;
 	}
+
+	g_at_io_set_write_handler(hdlc->io, NULL, NULL);
+	g_at_io_set_read_handler(hdlc->io, NULL, NULL);
 
 	g_at_io_unref(hdlc->io);
 	hdlc->io = NULL;
@@ -431,4 +445,12 @@ gboolean g_at_hdlc_send(GAtHDLC *hdlc, const unsigned char *data, gsize size)
 	g_at_io_set_write_handler(hdlc->io, can_write_data, hdlc);
 
 	return TRUE;
+}
+
+void g_at_hdlc_set_no_carrier_detect(GAtHDLC *hdlc, gboolean detect)
+{
+	if (hdlc == NULL)
+		return;
+
+	hdlc->no_carrier_detect = detect;
 }

@@ -130,6 +130,7 @@ enum ofono_atom_type {
 	OFONO_ATOM_TYPE_SIM_AUTH,
 	OFONO_ATOM_TYPE_EMULATOR_DUN,
 	OFONO_ATOM_TYPE_EMULATOR_HFP,
+	OFONO_ATOM_TYPE_LOCATION_REPORTING,
 };
 
 enum ofono_atom_watch_condition {
@@ -207,6 +208,8 @@ unsigned int __ofono_modem_add_powered_watch(struct ofono_modem *modem,
 void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
 					unsigned int id);
 
+void __ofono_modem_sim_reset(struct ofono_modem *modem);
+
 #include <ofono/call-barring.h>
 
 gboolean __ofono_call_barring_is_busy(struct ofono_call_barring *cb);
@@ -228,6 +231,7 @@ gboolean __ofono_call_settings_is_busy(struct ofono_call_settings *cs);
 #include <ofono/radio-settings.h>
 #include <ofono/audio-settings.h>
 #include <ofono/ctm.h>
+#include <ofono/location-reporting.h>
 
 #include <ofono/voicecall.h>
 
@@ -322,6 +326,12 @@ ofono_bool_t __ofono_is_valid_sim_pin(const char *pin,
 					enum ofono_sim_password_type type);
 
 ofono_bool_t __ofono_is_valid_net_pin(const char *pin);
+
+void __ofono_sim_refresh(struct ofono_sim *sim, GSList *file_list,
+				ofono_bool_t full_file_change,
+				ofono_bool_t naa_init);
+
+void __ofono_sim_recheck_pin(struct ofono_sim *sim);
 
 #include <ofono/stk.h>
 

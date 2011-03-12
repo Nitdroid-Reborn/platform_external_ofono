@@ -357,6 +357,9 @@ SUBSYSTEMS=="usb", ENV{OFONO_DRIVER}="isiusb", ENV{OFONO_ISI_ADDRESS}="16"
 # Nokia N900 modem
 SUBSYSTEMS=="hsi", ENV{OFONO_DRIVER}="n900", ENV{OFONO_ISI_ADDRESS}="108"
 
+# STE u8500
+KERNEL=="shrm0", ENV{OFONO_DRIVER}="u8500"
+
 LABEL="ofono_isi_end"
 
 SUBSYSTEM!="usb", GOTO="ofono_end"
@@ -452,7 +455,7 @@ ATTRS{idVendor}=="0421", ATTRS{idProduct}=="0623", ENV{OFONO_DRIVER}="nokia"
 ATTRS{idVendor}=="0421", ATTRS{idProduct}=="023e", ENV{OFONO_DRIVER}="nokiacdma"
 ATTRS{idVendor}=="0421", ATTRS{idProduct}=="00b6", ENV{OFONO_DRIVER}="nokiacdma"
 
-+# Teracom (Linktop/LW27x) 3G Data Card
-+ATTRS{idVendor}=="230d", ATTRS{idProduct}=="0001", ENV{OFONO_DRIVER}="linktop"
+# Teracom (Linktop/LW27x) 3G Data Card
+ATTRS{idVendor}=="230d", ATTRS{idProduct}=="0001", ENV{OFONO_DRIVER}="linktop"
 
 LABEL="ofono_end"

@@ -53,6 +53,7 @@ const char *pn_resource_name(int value)
 		_(PN_GSS);
 		_(PN_GPDS);
 		_(PN_WRAN);
+		_(PN_UICC);
 	}
 	return "PN_<UNKNOWN>";
 }
@@ -214,6 +215,131 @@ const char *mce_rf_state_name(enum mce_rf_state value)
 	return "MCE_RF<UNKNOWN>";
 }
 
+const char *uicc_message_id_name(enum uicc_message_id value)
+{
+	switch (value) {
+		_(UICC_REQ);
+		_(UICC_RESP);
+		_(UICC_IND);
+		_(UICC_CARD_REQ);
+		_(UICC_CARD_RESP);
+		_(UICC_CARD_IND);
+		_(UICC_APPLICATION_REQ);
+		_(UICC_APPLICATION_RESP);
+		_(UICC_APPLICATION_IND);
+		_(UICC_PIN_REQ);
+		_(UICC_PIN_RESP);
+		_(UICC_PIN_IND);
+		_(UICC_APPL_CMD_REQ);
+		_(UICC_APPL_CMD_RESP);
+		_(UICC_APPL_CMD_IND);
+		_(UICC_CONNECTOR_REQ);
+		_(UICC_CONNECTOR_RESP);
+		_(UICC_CAT_REQ);
+		_(UICC_CAT_RESP);
+		_(UICC_CAT_IND);
+		_(UICC_APDU_REQ);
+		_(UICC_APDU_RESP);
+		_(UICC_APDU_RESET_IND);
+		_(UICC_REFRESH_REQ);
+		_(UICC_REFRESH_RESP);
+		_(UICC_REFRESH_IND);
+		_(UICC_SIMLOCK_REQ);
+		_(UICC_SIMLOCK_RESP);
+		_(UICC_APDU_SAP_REQ);
+		_(UICC_APDU_SAP_RESP);
+		_(UICC_APDU_SAP_IND);
+		_(UICC_PWR_CTRL_REQ);
+		_(UICC_PWR_CTRL_RESP);
+		_(UICC_PWR_CTRL_IND);
+	}
+	return "UICC_<UNKNOWN>";
+}
+
+const char *uicc_status_name(uint8_t value)
+{
+	switch (value) {
+		/* Request performed successfully */
+		_(UICC_STATUS_OK);
+		/* Error in performing the command */
+		_(UICC_STATUS_FAIL);
+		/* Status is Unknown */
+		_(UICC_STATUS_UNKNOWN);
+		/* Server is not ready */
+		_(UICC_STATUS_NOT_READY);
+		/* Server start up is completed */
+		_(UICC_STATUS_START_UP_COMPLETED);
+		/* Server is shutting down */
+		_(UICC_STATUS_SHUTTING_DOWN);
+		/* Smart card is not ready */
+		_(UICC_STATUS_CARD_NOT_READY);
+		/* Smart card is ready */
+		_(UICC_STATUS_CARD_READY);
+		/* Smart card is disconnected */
+		_(UICC_STATUS_CARD_DISCONNECTED);
+		/* Smart card is not present */
+		_(UICC_STATUS_CARD_NOT_PRESENT);
+		/* Smart card has been rejected */
+		_(UICC_STATUS_CARD_REJECTED);
+		/* Application is active */
+		_(UICC_STATUS_APPL_ACTIVE);
+		/* Application is not active */
+		_(UICC_STATUS_APPL_NOT_ACTIVE);
+		/* PIN verification used */
+		_(UICC_STATUS_PIN_ENABLED);
+		/* PIN verification not used */
+		_(UICC_STATUS_PIN_DISABLED);
+	}
+	return "UICC_STATUS<UNKNOWN>";
+}
+
+const char *uicc_subblock_name(uint8_t value)
+{
+	switch (value) {
+		_(UICC_SB_SHUT_DOWN_CONFIG);
+		_(UICC_SB_CARD_STATUS);
+		_(UICC_SB_CARD_INFO);
+		_(UICC_SB_CARD_REJECT_CAUSE);
+		_(UICC_SB_CLIENT);
+		_(UICC_SB_APPL_DATA_OBJECT);
+		_(UICC_SB_APPLICATION);
+		_(UICC_SB_APPL_INFO);
+		_(UICC_SB_APPL_STATUS);
+		_(UICC_SB_FCP);
+		_(UICC_SB_FCI);
+		_(UICC_SB_CHV);
+		_(UICC_SB_PIN);
+		_(UICC_SB_PIN_REF);
+		_(UICC_SB_PUK);
+		_(UICC_SB_PIN_SUBST);
+		_(UICC_SB_PIN_INFO);
+		_(UICC_SB_APPL_PATH);
+		_(UICC_SB_SESSION);
+		_(UICC_SB_FILE_DATA);
+		_(UICC_SB_APDU);
+		_(UICC_SB_TRANSPARENT_READ);
+		_(UICC_SB_TRANSPARENT_UPDATE);
+		_(UICC_SB_TRANSPARENT);
+		_(UICC_SB_LINEAR_FIXED);
+		_(UICC_SB_CYCLIC);
+		_(UICC_SB_TERMINAL_PROFILE);
+		_(UICC_SB_TERMINAL_RESPONSE);
+		_(UICC_SB_ENVELOPE);
+		_(UICC_SB_POLLING_SET);
+		_(UICC_SB_REFRESH);
+		_(UICC_SB_AID);
+		_(UICC_SB_REFRESH_RESULT);
+		_(UICC_SB_APDU_ACTIONS);
+		_(UICC_SB_OBJECT_ID);
+		_(UICC_SB_STATUS_WORD);
+		_(UICC_SB_APDU_SAP_INFO);
+		_(UICC_SB_ACCESS_MODE);
+		_(UICC_SB_RESP_INFO);
+		_(UICC_SB_APDU_SAP_CONFIG);
+	}
+	return "UICC_<UNKNOWN>";
+}
+
 const char *sms_isi_cause_name(enum sms_isi_cause value)
 {
 	switch (value) {
@@ -315,6 +441,15 @@ const char *sms_message_id_name(enum sms_message_id value)
 		_(SMS_GSM_CB_ROUTING_RESP);
 		_(SMS_GSM_CB_ROUTING_NTF);
 		_(SMS_MESSAGE_SEND_STATUS_IND);
+		_(SMS_SETTINGS_UPDATE_REQ);
+		_(SMS_SETTINGS_UPDATE_RESP);
+		_(SMS_SETTINGS_READ_REQ);
+		_(SMS_SETTINGS_READ_RESP);
+		_(SMS_RECEIVED_MSG_REPORT_REQ);
+		_(SMS_RECEIVED_MSG_REPORT_RESP);
+		_(SMS_RECEIVE_MESSAGE_REQ);
+		_(SMS_RECEIVE_MESSAGE_RESP);
+		_(SMS_RECEIVED_MSG_IND);
 		_(SMS_COMMON_MESSAGE);
 	}
 	return "SMS_<UNKNOWN>";
@@ -332,6 +467,9 @@ const char *sms_subblock_name(enum sms_subblock value)
 		_(SMS_GSM_ROUTING);
 		_(SMS_GSM_CB_MESSAGE);
 		_(SMS_GSM_TPDU);
+		_(SMS_GSM_TPDU_25);
+		_(SMS_GSM_ROUTE_INFO);
+		_(SMS_GSM_PARAMETERS);
 		_(SMS_COMMON_DATA);
 		_(SMS_ADDRESS);
 	}
@@ -481,6 +619,7 @@ const char *info_message_id_name(enum info_message_id value)
 const char *info_subblock_name(enum info_subblock value)
 {
 	switch (value) {
+		_(INFO_SB_MODEMSW_VERSION);
 		_(INFO_SB_PRODUCT_INFO_NAME);
 		_(INFO_SB_PRODUCT_INFO_MANUFACTURER);
 		_(INFO_SB_SN_IMEI_PLAIN);
@@ -1135,6 +1274,8 @@ static const char *res_to_name(uint8_t res, uint8_t id)
 		return gss_message_id_name(id);
 	case PN_GPDS:
 		return gpds_message_id_name(id);
+	case PN_UICC:
+		return uicc_message_id_name(id);
 	}
 	return "UNKNOWN";
 }

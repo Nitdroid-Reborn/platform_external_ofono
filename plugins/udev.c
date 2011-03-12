@@ -105,7 +105,7 @@ static void add_mbm(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	const char *desc, *devnode;
-	const char *device, *data, *network;
+	const char *device, *data, *network, *gps;
 	int registered;
 
 	desc = udev_device_get_sysattr_value(udev_device, "device/interface");
@@ -152,6 +152,7 @@ static void add_mbm(struct ofono_modem *modem,
 	device  = ofono_modem_get_string(modem, MODEM_DEVICE);
 	data = ofono_modem_get_string(modem, DATA_DEVICE);
 	network = ofono_modem_get_string(modem, NETWORK_INTERFACE);
+	gps = ofono_modem_get_string(modem, GPS_DEVICE);
 
 	if (device != NULL && data != NULL && network != NULL) {
 		ofono_modem_set_integer(modem, "Registered", 1);
@@ -665,6 +666,8 @@ done:
 	else if (g_strcmp0(driver, "nokia") == 0)
 		add_nokia(modem, udev_device);
 	else if (g_strcmp0(driver, "isiusb") == 0)
+		add_isi(modem, udev_device);
+	else if (g_strcmp0(driver, "u8500") == 0)
 		add_isi(modem, udev_device);
 	else if (g_strcmp0(driver, "n900") == 0)
 		add_isi(modem, udev_device);

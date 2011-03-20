@@ -967,6 +967,61 @@ static void busy_notify(GAtResult *result, gpointer user_data)
 			clcc_poll_cb, vc, NULL);
 }
 
+static void cssi_notify(GAtResult *result, gpointer user_data)
+{
+	struct ofono_voicecall *vc = user_data;
+	GAtResultIter iter;
+	int code, index;
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+CSSI:"))
+		return;
+
+	if (!g_at_result_iter_next_number(&iter, &code))
+		return;
+
+	if (!g_at_result_iter_next_number(&iter, &index))
+		index = 0;
+
+	ofono_voicecall_ssn_mo_notify(vc, 0, code, index);
+}
+
+static void cssu_notify(GAtResult *result, gpointer user_data)
+{
+	struct ofono_voicecall *vc = user_data;
+	GAtResultIter iter;
+	int code;
+	int index;
+	const char *num;
+	struct ofono_phone_number ph;
+
+	ph.number[0] = '\0';
+	ph.type = 129;
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+CSSU:"))
+		return;
+
+	if (!g_at_result_iter_next_number(&iter, &code))
+		return;
+
+	if (!g_at_result_iter_next_number_default(&iter, -1, &index))
+		goto out;
+
+	if (!g_at_result_iter_next_string(&iter, &num))
+		goto out;
+
+	strncpy(ph.number, num, OFONO_MAX_PHONE_NUMBER_LENGTH);
+
+	if (!g_at_result_iter_next_number(&iter, &ph.type))
+		return;
+
+out:
+	ofono_voicecall_ssn_mt_notify(vc, 0, code, index, &ph);
+}
+
 static void vtd_query_cb(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_voicecall *vc = user_data;
@@ -1011,6 +1066,9 @@ static void at_voicecall_initialized(gboolean ok, GAtResult *result,
 				no_answer_notify, FALSE, vc, NULL);
 	g_at_chat_register(vd->chat, "BUSY", busy_notify, FALSE, vc, NULL);
 
+	g_at_chat_register(vd->chat, "+CSSI:", cssi_notify, FALSE, vc, NULL);
+	g_at_chat_register(vd->chat, "+CSSU:", cssu_notify, FALSE, vc, NULL);
+
 	ofono_voicecall_register(vc);
 
 	/* Populate the call list */
@@ -1038,6 +1096,7 @@ static int at_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 	g_at_chat_send(vd->chat, "AT+CDIP=1", NULL, NULL, NULL, NULL);
 	g_at_chat_send(vd->chat, "AT+CNAP=1", NULL, NULL, NULL, NULL);
 	g_at_chat_send(vd->chat, "AT+COLP=1", NULL, NULL, NULL, NULL);
+	g_at_chat_send(vd->chat, "AT+CSSN=1,1", NULL, NULL, NULL, NULL);
 	g_at_chat_send(vd->chat, "AT+VTD?", NULL,
 				vtd_query_cb, vc, NULL);
 	g_at_chat_send(vd->chat, "AT+CCWA=1", NULL,

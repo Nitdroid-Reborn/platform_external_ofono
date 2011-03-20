@@ -28,7 +28,6 @@ extern "C" {
 
 #define PN_NETWORK					0x0A
 #define PN_MODEM_NETWORK				0xC8
-#define NETWORK_TIMEOUT					5
 #define NETWORK_SCAN_TIMEOUT				180
 #define NETWORK_SET_TIMEOUT				240
 #define NET_INVALID_TIME				0x64
@@ -44,7 +43,9 @@ enum net_message_id {
 	NET_RSSI_GET_REQ =				0x0B,
 	NET_RSSI_GET_RESP =				0x0C,
 	NET_RSSI_IND =					0x1E,
+	NET_CIPHERING_IND =				0x20,
 	NET_TIME_IND =					0x27,
+	NET_CHANNEL_INFO_IND =				0x2C,
 	NET_RAT_IND =					0x35,
 	NET_RAT_REQ =					0x36,
 	NET_RAT_RESP =					0x37,

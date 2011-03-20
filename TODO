@@ -81,13 +81,6 @@ SIM / SIM File system
   Complexity: C2
   Owner: Pekka Pessi <pekka.pessi@nokia.com>
 
-- Check SIM pin status if sim_change_pin fails. If it is anything other than
-  READY, we must tear the state back to pre_sim state and set the modem offline.
-
-  Priority: Medium
-  Complexity: C1
-  Owner: Marit Henriksen <marit.henriksen@stericsson.com>
-
 - Add support for CPHS Customer Service Profile (CSP).  This task adds support
   for reading the EFcsp file and in particular, interpreting the PLMN mode bit
   within the 'Value Added Services' service group.
@@ -450,17 +443,6 @@ Miscellaneous
   Priority: Medium
   Complexity: C8
   Owner: Jukka Saunamäki <jukka.saunamaki@nokia.com>
-
-- Add support for GPS power control atom.  Many modem manufacturers provide
-  a GPS unit with their modem hardware.  This unit can be turned on or off
-  and frequently takes over one of the tty ports that the modem provides.
-
-  This feature is not discussed in 27.007, thus manufacturer specific commands
-  are required.
-
-  Priority: Low
-  Complexity: C4
-  Owner: Rafael Ignacio Zurita <rafael.zurita@profusion.mobi>
 
 - Add Location Service API for providing basic E911 support.
   This will be based on the 27.007 defined AT commands using

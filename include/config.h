@@ -58,7 +58,7 @@
 #define PLUGINDIR "/system/lib/"
 
 /* Version number of package */
-#define VERSION "0.44"
+#define VERSION "0.45"
 
 /* Decide if we're going to support IPv6 */
 /* IPv6 can be forced off with "make COPTS=-DNO_IPV6" */

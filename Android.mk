@@ -56,7 +56,6 @@ LOCAL_SRC_FILES:= \
 	drivers/isimodem/sms.c \
 	drivers/isimodem/cbs.c \
 	drivers/isimodem/sim.c \
-	drivers/isimodem/ssn.c \
 	drivers/isimodem/ussd.c \
 	drivers/isimodem/gprs.c \
 	drivers/isimodem/gprs-context.c \
@@ -90,7 +89,6 @@ LOCAL_SRC_FILES:= \
 	src/call-settings.c \
 	src/call-forwarding.c \
 	src/call-meter.c \
-	src/ssn.c \
 	src/call-barring.c \
 	src/sim.c \
 	src/simfs.c \

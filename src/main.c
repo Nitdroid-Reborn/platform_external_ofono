@@ -132,7 +132,7 @@ int main(int argc, char **argv)
 	GOptionContext *context;
 	GError *err = NULL;
 	sigset_t mask;
-	DBusConnection *conn;
+	DBusConnection *conn = 0;
 	DBusError error;
 	int signal_fd;
 	GIOChannel *signal_io;
@@ -218,18 +218,23 @@ int main(int argc, char **argv)
 
 	dbus_error_init(&error);
 
-	conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, OFONO_SERVICE, &error);
-	if (conn == NULL) {
-		if (dbus_error_is_set(&error) == TRUE) {
-			ofono_error("Unable to hop onto D-Bus: %s",
-					error.message);
-			dbus_error_free(&error);
-		} else {
-			ofono_error("Unable to hop onto D-Bus");
-		}
+    int retryCount = 3;
+    while (!conn && retryCount-- > 0) {
+        conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, OFONO_SERVICE, &error);
+        if (conn == NULL) {
+            if (dbus_error_is_set(&error) == TRUE) {
+                ofono_error("Unable to hop onto D-Bus: %s",
+                            error.message);
+                dbus_error_free(&error);
+            } else {
+                ofono_error("Unable to hop onto D-Bus");
+            }
+            sleep(1);
+        }
+    }
 
-		goto cleanup;
-	}
+    if (!conn)
+        goto cleanup;
 
 	g_dbus_set_disconnect_function(conn, system_bus_disconnected,
 					NULL, NULL);

@@ -235,7 +235,7 @@ static void reachable_cb(const GIsiMessage *msg, void *data)
 	if (!g_isi_msg_error(msg) < 0)
 		return;
 
-	ISI_VERSION_DBG(msg);
+	ISI_RESOURCE_DBG(msg);
 
 	g_isi_client_ind_subscribe(isi->client, MCE_MODEM_STATE_IND,
 					mce_state_ind_cb, om);
@@ -436,7 +436,7 @@ static void u8500_pre_sim(struct ofono_modem *modem)
 
 	ofono_sim_create(modem, 0, "isimodem", isi->modem);
 	ofono_devinfo_create(modem, 0, "u8500", isi->modem);
-	ofono_voicecall_create(modem, 0, "wgmodem2.5", isi->modem);
+	ofono_voicecall_create(modem, 0, "isimodem", isi->modem);
 }
 
 static void u8500_post_sim(struct ofono_modem *modem)
@@ -456,7 +456,7 @@ static void u8500_post_online(struct ofono_modem *modem)
 
 	DBG("(%p) with %s", modem, isi->ifname);
 
-	ofono_netreg_create(modem, 0, "wgmodem2.5", isi->modem);
+	ofono_netreg_create(modem, 0, "isimodem", isi->modem);
 	ofono_sms_create(modem, 0, "isimodem", isi->modem);
 	ofono_cbs_create(modem, 0, "isimodem", isi->modem);
 	ofono_ussd_create(modem, 0, "isimodem", isi->modem);
@@ -538,7 +538,7 @@ static void u8500_devinfo_reachable_cb(const GIsiMessage *msg, void *data)
 	if (g_isi_msg_error(msg) < 0)
 		return;
 
-	ISI_VERSION_DBG(msg);
+	ISI_RESOURCE_DBG(msg);
 
 	ofono_devinfo_register(info);
 }

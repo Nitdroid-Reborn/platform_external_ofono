@@ -78,6 +78,7 @@ struct ofono_modem {
 	ofono_bool_t		online;
 	struct ofono_watchlist	*online_watches;
 	struct ofono_watchlist	*powered_watches;
+	guint			emergency;
 	GHashTable		*properties;
 	struct ofono_sim	*sim;
 	unsigned int		sim_watch;
@@ -271,6 +272,9 @@ unsigned int __ofono_modem_add_atom_watch(struct ofono_modem *modem,
 					void *data, ofono_destroy_func destroy)
 {
 	struct atom_watch *watch;
+	unsigned int id;
+	GSList *l;
+	struct ofono_atom *atom;
 
 	if (notify == NULL)
 		return 0;
@@ -282,8 +286,19 @@ unsigned int __ofono_modem_add_atom_watch(struct ofono_modem *modem,
 	watch->item.destroy = destroy;
 	watch->item.notify_data = data;
 
-	return __ofono_watchlist_add_item(modem->atom_watches,
+	id = __ofono_watchlist_add_item(modem->atom_watches,
 					(struct ofono_watchlist_item *)watch);
+
+	for (l = modem->atoms; l; l = l->next) {
+		atom = l->data;
+
+		if (atom->type != type || atom->unregister == NULL)
+			continue;
+
+		notify(atom, OFONO_ATOM_WATCH_CONDITION_REGISTERED, data);
+	}
+
+	return id;
 }
 
 gboolean __ofono_modem_remove_atom_watch(struct ofono_modem *modem,
@@ -304,7 +319,7 @@ struct ofono_atom *__ofono_modem_find_atom(struct ofono_modem *modem,
 	for (l = modem->atoms; l; l = l->next) {
 		atom = l->data;
 
-		if (atom->type == type)
+		if (atom->type == type && atom->unregister != NULL)
 			return atom;
 	}
 
@@ -325,6 +340,30 @@ void __ofono_modem_foreach_atom(struct ofono_modem *modem,
 		atom = l->data;
 
 		if (atom->type != type)
+			continue;
+
+		callback(atom, data);
+	}
+}
+
+void __ofono_modem_foreach_registered_atom(struct ofono_modem *modem,
+						enum ofono_atom_type type,
+						ofono_atom_func callback,
+						void *data)
+{
+	GSList *l;
+	struct ofono_atom *atom;
+
+	if (modem == NULL)
+		return;
+
+	for (l = modem->atoms; l; l = l->next) {
+		atom = l->data;
+
+		if (atom->type != type)
+			continue;
+
+		if (atom->unregister == NULL)
 			continue;
 
 		callback(atom, data);
@@ -415,25 +454,33 @@ static void notify_powered_watches(struct ofono_modem *modem)
 	}
 }
 
+static void set_online(struct ofono_modem *modem, ofono_bool_t new_online)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+
+	if (new_online == modem->online)
+		return;
+
+	modem->online = new_online;
+
+	ofono_dbus_signal_property_changed(conn, modem->path,
+						OFONO_MODEM_INTERFACE,
+						"Online", DBUS_TYPE_BOOLEAN,
+						&modem->online);
+
+	notify_online_watches(modem);
+}
+
 static void modem_change_state(struct ofono_modem *modem,
 				enum modem_state new_state)
 {
 	struct ofono_modem_driver const *driver = modem->driver;
 	enum modem_state old_state = modem->modem_state;
-	ofono_bool_t new_online = new_state == MODEM_STATE_ONLINE;
 
 	DBG("old state: %d, new state: %d", old_state, new_state);
 
 	if (old_state == new_state)
 		return;
-
-	if (new_online != modem->online) {
-		DBusConnection *conn = ofono_dbus_get_connection();
-		modem->online = new_online;
-		ofono_dbus_signal_property_changed(conn, modem->path,
-					OFONO_MODEM_INTERFACE, "Online",
-					DBUS_TYPE_BOOLEAN, &modem->online);
-	}
 
 	modem->modem_state = new_state;
 
@@ -454,10 +501,10 @@ static void modem_change_state(struct ofono_modem *modem,
 		if (old_state < MODEM_STATE_OFFLINE) {
 			if (driver->post_sim)
 				driver->post_sim(modem);
+
 			__ofono_history_probe_drivers(modem);
 			__ofono_nettime_probe_drivers(modem);
-		} else
-			notify_online_watches(modem);
+		}
 
 		break;
 
@@ -465,7 +512,6 @@ static void modem_change_state(struct ofono_modem *modem,
 		if (driver->post_online)
 			driver->post_online(modem);
 
-		notify_online_watches(modem);
 		break;
 	}
 }
@@ -518,6 +564,20 @@ void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
 	__ofono_watchlist_remove_item(modem->powered_watches, id);
 }
 
+static gboolean modem_has_sim(struct ofono_modem *modem)
+{
+	GSList *l;
+	struct ofono_atom *atom;
+
+	for (l = modem->atoms; l; l = l->next) {
+		atom = l->data;
+
+		if (atom->type == OFONO_ATOM_TYPE_SIM)
+			return TRUE;
+	}
+
+	return FALSE;
+}
 static void common_online_cb(const struct ofono_error *error, void *data)
 {
 	struct ofono_modem *modem = data;
@@ -540,14 +600,22 @@ static void common_online_cb(const struct ofono_error *error, void *data)
 	 */
 	switch (modem->modem_state) {
 	case MODEM_STATE_OFFLINE:
+		set_online(modem, TRUE);
+
+		/* Will this increase emergency call setup time??? */
 		modem_change_state(modem, MODEM_STATE_ONLINE);
 		break;
 	case MODEM_STATE_POWER_OFF:
 		/* The powered operation is pending */
 		break;
 	case MODEM_STATE_PRE_SIM:
-		/* Go back offline if the sim was removed or reset */
-		modem->driver->set_online(modem, 0, NULL, NULL);
+		/*
+		 * Its valid to be in online even without a SIM/SIM being
+		 * PIN locked. e.g.: Emergency mode
+		 */
+		DBG("Online in PRE SIM state");
+
+		set_online(modem, TRUE);
 		break;
 	case MODEM_STATE_ONLINE:
 		ofono_error("Online called when the modem is already online!");
@@ -563,8 +631,7 @@ static void online_cb(const struct ofono_error *error, void *data)
 	if (!modem->pending)
 		goto out;
 
-	if (error->type == OFONO_ERROR_TYPE_NO_ERROR &&
-			modem->modem_state == MODEM_STATE_OFFLINE)
+	if (error->type == OFONO_ERROR_TYPE_NO_ERROR)
 		reply = dbus_message_new_method_return(modem->pending);
 	else
 		reply = __ofono_error_failed(modem->pending);
@@ -587,9 +654,19 @@ static void offline_cb(const struct ofono_error *error, void *data)
 
 	__ofono_dbus_pending_reply(&modem->pending, reply);
 
-	if (error->type == OFONO_ERROR_TYPE_NO_ERROR &&
-				modem->modem_state == MODEM_STATE_ONLINE)
-		modem_change_state(modem, MODEM_STATE_OFFLINE);
+	if (error->type == OFONO_ERROR_TYPE_NO_ERROR) {
+		switch (modem->modem_state) {
+		case MODEM_STATE_PRE_SIM:
+			set_online(modem, FALSE);
+			break;
+		case MODEM_STATE_ONLINE:
+			set_online(modem, FALSE);
+			modem_change_state(modem, MODEM_STATE_OFFLINE);
+			break;
+		default:
+			break;
+		}
+	}
 }
 
 static void sim_state_watch(enum ofono_sim_state new_state, void *user)
@@ -609,6 +686,9 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 		 * straight to the online state
 		 */
 		if (modem->driver->set_online == NULL)
+			set_online(modem, TRUE);
+
+		if (modem->online == TRUE)
 			modem_change_state(modem, MODEM_STATE_ONLINE);
 		else if (modem->get_online)
 			modem->driver->set_online(modem, 1, common_online_cb,
@@ -638,11 +718,11 @@ static DBusMessage *set_property_online(struct ofono_modem *modem,
 	if (modem->online == online)
 		return dbus_message_new_method_return(msg);
 
+	if (ofono_modem_get_emergency_mode(modem) == TRUE)
+		return __ofono_error_emergency_active(msg);
+
 	if (driver->set_online == NULL)
 		return __ofono_error_not_implemented(msg);
-
-	if (modem->modem_state < MODEM_STATE_OFFLINE)
-		return __ofono_error_not_available(msg);
 
 	modem->pending = dbus_message_ref(msg);
 
@@ -668,6 +748,7 @@ void __ofono_modem_append_properties(struct ofono_modem *modem,
 	int i;
 	GSList *l;
 	struct ofono_atom *devinfo_atom;
+	dbus_bool_t emergency = ofono_modem_get_emergency_mode(modem);
 
 	ofono_dbus_dict_append(dict, "Online", DBUS_TYPE_BOOLEAN,
 				&modem->online);
@@ -677,6 +758,9 @@ void __ofono_modem_append_properties(struct ofono_modem *modem,
 
 	ofono_dbus_dict_append(dict, "Lockdown", DBUS_TYPE_BOOLEAN,
 				&modem->lockdown);
+
+	ofono_dbus_dict_append(dict, "Emergency", DBUS_TYPE_BOOLEAN,
+				&emergency);
 
 	devinfo_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_DEVINFO);
 
@@ -809,6 +893,8 @@ static gboolean set_powered_timeout(gpointer user)
 		DBusConnection *conn = ofono_dbus_get_connection();
 		dbus_bool_t powered = FALSE;
 
+		set_online(modem, FALSE);
+
 		modem->powered = FALSE;
 		notify_powered_watches(modem);
 
@@ -879,6 +965,9 @@ static DBusMessage *set_property_lockdown(struct ofono_modem *modem,
 		goto done;
 	}
 
+	if (ofono_modem_get_emergency_mode(modem) == TRUE)
+		return __ofono_error_emergency_active(msg);
+
 	modem->lock_owner = g_strdup(caller);
 
 	modem->lock_watch = g_dbus_add_disconnect_watch(conn,
@@ -909,6 +998,8 @@ static DBusMessage *set_property_lockdown(struct ofono_modem *modem,
 						set_powered_timeout, modem);
 		return NULL;
 	}
+
+	set_online(modem, FALSE);
 
 	powered = FALSE;
 	ofono_dbus_signal_property_changed(conn, modem->path,
@@ -969,6 +1060,9 @@ static DBusMessage *modem_set_property(DBusConnection *conn,
 		if (modem->powered == powered)
 			return dbus_message_new_method_return(msg);
 
+		if (ofono_modem_get_emergency_mode(modem) == TRUE)
+			return __ofono_error_emergency_active(msg);
+
 		if (modem->lockdown)
 			return __ofono_error_access_denied(msg);
 
@@ -994,11 +1088,12 @@ static DBusMessage *modem_set_property(DBusConnection *conn,
 			modem_change_state(modem, MODEM_STATE_PRE_SIM);
 
 			/* Force SIM Ready for devies with no sim atom */
-			if (__ofono_modem_find_atom(modem,
-						OFONO_ATOM_TYPE_SIM) == NULL)
+			if (modem_has_sim(modem) == FALSE)
 				sim_state_watch(OFONO_SIM_STATE_READY, modem);
-		} else
+		} else {
+			set_online(modem, FALSE);
 			modem_change_state(modem, MODEM_STATE_POWER_OFF);
+		}
 
 		return NULL;
 	}
@@ -1073,11 +1168,13 @@ void ofono_modem_set_powered(struct ofono_modem *modem, ofono_bool_t powered)
 		modem_change_state(modem, MODEM_STATE_PRE_SIM);
 
 		/* Force SIM Ready for devices with no sim atom */
-		if (__ofono_modem_find_atom(modem,
-					OFONO_ATOM_TYPE_SIM) == NULL)
+		if (modem_has_sim(modem) == FALSE)
 			sim_state_watch(OFONO_SIM_STATE_READY, modem);
-	} else
+	} else {
+		set_online(modem, FALSE);
+
 		modem_change_state(modem, MODEM_STATE_POWER_OFF);
+	}
 
 out:
 	if (powering_down && powered == FALSE) {
@@ -1200,8 +1297,9 @@ void ofono_modem_remove_interface(struct ofono_modem *modem,
 						(GCompareFunc) strcmp);
 		if (found) {
 			g_free(found->data);
-			modem->feature_list = g_slist_remove(modem->feature_list,
-								found->data);
+			modem->feature_list =
+				g_slist_remove(modem->feature_list,
+						found->data);
 		}
 	}
 
@@ -1386,6 +1484,12 @@ static void gmr_cb(struct ofono_emulator *em,
 	attr_template(em, req, info->revision);
 }
 
+static void gcap_cb(struct ofono_emulator *em,
+			struct ofono_emulator_request *req, void *userdata)
+{
+	attr_template(em, req, "+GCAP: +CGSM");
+}
+
 static void dun_watch(struct ofono_atom *atom,
 			enum ofono_atom_watch_condition cond, void *data)
 {
@@ -1398,6 +1502,7 @@ static void dun_watch(struct ofono_atom *atom,
 	ofono_emulator_add_handler(em, "+GMI", gmi_cb, data, NULL);
 	ofono_emulator_add_handler(em, "+GMM", gmm_cb, data, NULL);
 	ofono_emulator_add_handler(em, "+GMR", gmr_cb, data, NULL);
+	ofono_emulator_add_handler(em, "+GCAP", gcap_cb, data, NULL);
 #endif
 }
 
@@ -1434,11 +1539,6 @@ static void devinfo_remove(struct ofono_atom *atom)
 	if (info->driver->remove)
 		info->driver->remove(info);
 
-	g_free(info->manufacturer);
-	g_free(info->model);
-	g_free(info->revision);
-	g_free(info->serial);
-
 	g_free(info);
 }
 
@@ -1471,20 +1571,32 @@ struct ofono_devinfo *ofono_devinfo_create(struct ofono_modem *modem,
 	return info;
 }
 
+static void devinfo_unregister(struct ofono_atom *atom)
+{
+	struct ofono_devinfo *info = __ofono_atom_get_data(atom);
+
+	g_free(info->manufacturer);
+	info->manufacturer = NULL;
+
+	g_free(info->model);
+	info->model = NULL;
+
+	g_free(info->revision);
+	info->revision = NULL;
+
+	g_free(info->serial);
+	info->serial = NULL;
+}
+
 void ofono_devinfo_register(struct ofono_devinfo *info)
 {
 	struct ofono_modem *modem = __ofono_atom_get_modem(info->atom);
-	struct ofono_atom *dun_atom;
+
+	__ofono_atom_register(info->atom, devinfo_unregister);
 
 	info->dun_watch = __ofono_modem_add_atom_watch(modem,
 						OFONO_ATOM_TYPE_EMULATOR_DUN,
 						dun_watch, info, NULL);
-
-	dun_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_EMULATOR_DUN);
-
-	if (dun_atom && __ofono_atom_get_registered(dun_atom))
-		dun_watch(dun_atom, OFONO_ATOM_WATCH_CONDITION_REGISTERED,
-				info);
 
 	query_manufacturer(info);
 }
@@ -1971,9 +2083,6 @@ void __ofono_modem_sim_reset(struct ofono_modem *modem)
 {
 	DBG("%p", modem);
 
-	if (modem->modem_state == MODEM_STATE_ONLINE)
-		modem->get_online = TRUE;
-
 	modem_change_state(modem, MODEM_STATE_PRE_SIM);
 }
 
@@ -2041,4 +2150,45 @@ void __ofono_modem_foreach(ofono_modem_foreach_func func, void *userdata)
 		modem = l->data;
 		func(modem, userdata);
 	}
+}
+
+ofono_bool_t ofono_modem_get_emergency_mode(struct ofono_modem *modem)
+{
+	return modem->emergency != 0;
+}
+
+void __ofono_modem_inc_emergency_mode(struct ofono_modem *modem)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+	dbus_bool_t emergency = TRUE;
+
+	if (++modem->emergency > 1)
+		return;
+
+	ofono_dbus_signal_property_changed(conn, modem->path,
+						OFONO_MODEM_INTERFACE,
+						"Emergency", DBUS_TYPE_BOOLEAN,
+						&emergency);
+}
+
+void __ofono_modem_dec_emergency_mode(struct ofono_modem *modem)
+{
+	DBusConnection *conn = ofono_dbus_get_connection();
+	dbus_bool_t emergency = FALSE;
+
+	if (modem->emergency == 0) {
+		ofono_error("emergency mode is already deactivated!!!");
+		return;
+	}
+
+	if (modem->emergency > 1)
+		goto out;
+
+	ofono_dbus_signal_property_changed(conn, modem->path,
+						OFONO_MODEM_INTERFACE,
+						"Emergency", DBUS_TYPE_BOOLEAN,
+						&emergency);
+
+out:
+	modem->emergency--;
 }

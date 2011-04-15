@@ -58,6 +58,7 @@ DBusMessage *__ofono_error_not_attached(DBusMessage *msg);
 DBusMessage *__ofono_error_attach_in_progress(DBusMessage *msg);
 DBusMessage *__ofono_error_canceled(DBusMessage *msg);
 DBusMessage *__ofono_error_access_denied(DBusMessage *msg);
+DBusMessage *__ofono_error_emergency_active(DBusMessage *msg);
 
 void __ofono_dbus_pending_reply(DBusMessage **msg, DBusMessage *reply);
 
@@ -127,10 +128,12 @@ enum ofono_atom_type {
 	OFONO_ATOM_TYPE_NETTIME,
 	OFONO_ATOM_TYPE_CTM,
 	OFONO_ATOM_TYPE_CDMA_VOICECALL_MANAGER,
+	OFONO_ATOM_TYPE_CDMA_CONNMAN,
 	OFONO_ATOM_TYPE_SIM_AUTH,
 	OFONO_ATOM_TYPE_EMULATOR_DUN,
 	OFONO_ATOM_TYPE_EMULATOR_HFP,
 	OFONO_ATOM_TYPE_LOCATION_REPORTING,
+	OFONO_ATOM_TYPE_GNSS,
 };
 
 enum ofono_atom_watch_condition {
@@ -160,6 +163,11 @@ struct ofono_atom *__ofono_modem_find_atom(struct ofono_modem *modem,
 void __ofono_modem_foreach_atom(struct ofono_modem *modem,
 				enum ofono_atom_type type,
 				ofono_atom_func callback, void *data);
+
+void __ofono_modem_foreach_registered_atom(struct ofono_modem *modem,
+						enum ofono_atom_type type,
+						ofono_atom_func callback,
+						void *data);
 
 void *__ofono_atom_get_data(struct ofono_atom *atom);
 const char *__ofono_atom_get_path(struct ofono_atom *atom);
@@ -209,6 +217,9 @@ void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
 					unsigned int id);
 
 void __ofono_modem_sim_reset(struct ofono_modem *modem);
+
+void __ofono_modem_inc_emergency_mode(struct ofono_modem *modem);
+void __ofono_modem_dec_emergency_mode(struct ofono_modem *modem);
 
 #include <ofono/call-barring.h>
 
@@ -297,6 +308,9 @@ int __ofono_sms_txq_set_submit_notify(struct ofono_sms *sms,
 					ofono_sms_txq_submit_cb_t cb,
 					void *data,
 					ofono_destroy_func destroy);
+
+int __ofono_sms_txq_cancel(struct ofono_sms *sms,
+				const struct ofono_uuid *uuid);
 
 const char *__ofono_sms_message_path_from_uuid(struct ofono_sms *sms,
 						const struct ofono_uuid *uuid);
@@ -437,6 +451,7 @@ void __ofono_nettime_info_received(struct ofono_modem *modem,
 					struct ofono_network_time *info);
 
 #include <ofono/cdma-voicecall.h>
+#include <ofono/cdma-connman.h>
 #include <ofono/sim-auth.h>
 
 #include <ofono/gprs-provision.h>
@@ -449,3 +464,4 @@ void __ofono_gprs_provision_free_settings(
 				int count);
 
 #include <ofono/emulator.h>
+#include <ofono/gnss.h>

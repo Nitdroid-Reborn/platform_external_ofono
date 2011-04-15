@@ -265,10 +265,11 @@ static void gpds_reachable_cb(const GIsiMessage *msg, void *opaque)
 
 	if (g_isi_msg_error(msg) < 0) {
 		DBG("unable to bootstrap gprs driver");
+		ofono_gprs_remove(gprs);
 		return;
 	}
 
-	ISI_VERSION_DBG(msg);
+	ISI_RESOURCE_DBG(msg);
 
 	g_isi_client_ind_subscribe(gd->client, GPDS_DETACH_IND,
 					detach_ind_cb, gprs);

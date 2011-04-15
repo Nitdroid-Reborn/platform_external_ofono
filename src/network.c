@@ -42,7 +42,8 @@
 
 enum network_registration_mode {
 	NETWORK_REGISTRATION_MODE_AUTO =	0,
-	NETWORK_REGISTRATION_MODE_MANUAL =	1,
+	NETWORK_REGISTRATION_MODE_MANUAL =	2,
+	NETWORK_REGISTRATION_MODE_AUTO_ONLY =	5, /* Out of range of 27.007 */
 };
 
 #define SETTINGS_STORE "netreg"
@@ -100,6 +101,8 @@ static const char *registration_mode_to_string(int mode)
 	switch (mode) {
 	case NETWORK_REGISTRATION_MODE_AUTO:
 		return "auto";
+	case NETWORK_REGISTRATION_MODE_AUTO_ONLY:
+		return "auto-only";
 	case NETWORK_REGISTRATION_MODE_MANUAL:
 		return "manual";
 	}
@@ -145,33 +148,6 @@ static char **network_operator_technologies(struct network_operator_data *opd)
 	return techs;
 }
 
-static void set_registration_mode(struct ofono_netreg *netreg, int mode)
-{
-	DBusConnection *conn;
-	const char *strmode;
-	const char *path;
-
-	if (netreg->mode == mode)
-		return;
-
-	netreg->mode = mode;
-
-	if (netreg->settings) {
-		g_key_file_set_integer(netreg->settings, SETTINGS_GROUP,
-					"Mode", netreg->mode);
-		storage_sync(netreg->imsi, SETTINGS_STORE, netreg->settings);
-	}
-
-	strmode = registration_mode_to_string(mode);
-
-	conn = ofono_dbus_get_connection();
-	path = __ofono_atom_get_path(netreg->atom);
-
-	ofono_dbus_signal_property_changed(conn, path,
-					OFONO_NETWORK_REGISTRATION_INTERFACE,
-					"Mode", DBUS_TYPE_STRING, &strmode);
-}
-
 static void registration_status_callback(const struct ofono_error *error,
 					int status, int lac, int ci, int tech,
 					void *data)
@@ -186,26 +162,10 @@ static void registration_status_callback(const struct ofono_error *error,
 	ofono_netreg_status_notify(netreg, status, lac, ci, tech);
 }
 
-static void register_callback(const struct ofono_error *error, void *data)
+static void init_register(const struct ofono_error *error, void *data)
 {
 	struct ofono_netreg *netreg = data;
-	DBusConnection *conn = ofono_dbus_get_connection();
-	DBusMessage *reply;
 
-	if (netreg->pending == NULL)
-		goto out;
-
-	if (error->type == OFONO_ERROR_TYPE_NO_ERROR)
-		reply = dbus_message_new_method_return(netreg->pending);
-	else
-		reply = __ofono_error_failed(netreg->pending);
-
-	g_dbus_send_message(conn, reply);
-
-	dbus_message_unref(netreg->pending);
-	netreg->pending = NULL;
-
-out:
 	if (netreg->driver->registration_status == NULL)
 		return;
 
@@ -213,13 +173,72 @@ out:
 					registration_status_callback, netreg);
 }
 
-static void init_register(const struct ofono_error *error, void *data)
+static void enforce_auto_only(struct ofono_netreg *netreg)
+{
+	if (netreg->mode != NETWORK_REGISTRATION_MODE_MANUAL)
+		return;
+
+	if (netreg->driver->register_auto == NULL)
+		return;
+
+	netreg->driver->register_auto(netreg, init_register, netreg);
+}
+
+static void set_registration_mode(struct ofono_netreg *netreg, int mode)
+{
+	DBusConnection *conn;
+	const char *strmode;
+	const char *path;
+
+	if (netreg->mode == mode)
+		return;
+
+	if (mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+		enforce_auto_only(netreg);
+
+	netreg->mode = mode;
+
+	if (netreg->settings) {
+		const char *mode;
+
+		if (netreg->mode == NETWORK_REGISTRATION_MODE_MANUAL)
+			mode = "manual";
+		else
+			mode = "auto";
+
+		g_key_file_set_string(netreg->settings, SETTINGS_GROUP,
+					"Mode", mode);
+		storage_sync(netreg->imsi, SETTINGS_STORE, netreg->settings);
+	}
+
+	strmode = registration_mode_to_string(mode);
+
+	conn = ofono_dbus_get_connection();
+	path = __ofono_atom_get_path(netreg->atom);
+
+	ofono_dbus_signal_property_changed(conn, path,
+					OFONO_NETWORK_REGISTRATION_INTERFACE,
+					"Mode", DBUS_TYPE_STRING, &strmode);
+}
+
+static void register_callback(const struct ofono_error *error, void *data)
 {
 	struct ofono_netreg *netreg = data;
+	DBusMessage *reply;
 
-	if (netreg->driver->registration_status)
-		netreg->driver->registration_status(netreg,
-					registration_status_callback, netreg);
+	if (error->type == OFONO_ERROR_TYPE_NO_ERROR)
+		reply = dbus_message_new_method_return(netreg->pending);
+	else
+		reply = __ofono_error_failed(netreg->pending);
+
+	__ofono_dbus_pending_reply(&netreg->pending, reply);
+
+	if (netreg->driver->registration_status == NULL)
+		return;
+
+	netreg->driver->registration_status(netreg,
+						registration_status_callback,
+						netreg);
 }
 
 static struct network_operator_data *
@@ -588,6 +607,9 @@ static DBusMessage *network_operator_register(DBusConnection *conn,
 	struct network_operator_data *opd = data;
 	struct ofono_netreg *netreg = opd->netreg;
 
+	if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+		return __ofono_error_access_denied(msg);
+
 	if (netreg->pending)
 		return __ofono_error_busy(msg);
 
@@ -830,6 +852,9 @@ static DBusMessage *network_register(DBusConnection *conn,
 {
 	struct ofono_netreg *netreg = data;
 
+	if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+		return __ofono_error_access_denied(msg);
+
 	if (netreg->pending)
 		return __ofono_error_busy(msg);
 
@@ -948,6 +973,9 @@ static DBusMessage *network_scan(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	struct ofono_netreg *netreg = data;
+
+	if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+		return __ofono_error_access_denied(msg);
 
 	if (netreg->pending)
 		return __ofono_error_busy(msg);
@@ -1321,7 +1349,8 @@ void ofono_netreg_status_notify(struct ofono_netreg *netreg, int status,
 		set_registration_status(netreg, status);
 
 		modem = __ofono_atom_get_modem(netreg->atom);
-		__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
+		__ofono_modem_foreach_registered_atom(modem,
+					OFONO_ATOM_TYPE_EMULATOR_HFP,
 					notify_emulator_status,
 					GINT_TO_POINTER(netreg->status));
 	}
@@ -1370,6 +1399,57 @@ void ofono_netreg_time_notify(struct ofono_netreg *netreg,
 	__ofono_nettime_info_received(modem, info);
 }
 
+static void sim_csp_read_cb(int ok, int total_length, int record,
+				const unsigned char *data,
+				int record_length, void *user_data)
+{
+	struct ofono_netreg *netreg = user_data;
+	int i = 0;
+
+	if (!ok)
+		return;
+
+	if (total_length < 18)
+		return;
+
+	/*
+	 * According to CPHS 4.2, EFcsp is an array of two-byte service
+	 * entries, each consisting of a one byte service group
+	 * identifier followed by 8 bits; each bit is indicating
+	 * availability of a specific service or feature.
+	 *
+	 * The PLMN mode bit, if present, indicates whether manual
+	 * operator selection should be disabled or enabled. When
+	 * unset, the device is forced to automatic mode; when set,
+	 * manual selection is to be enabled. The latter is also the
+	 * default.
+	 */
+	while (i < total_length &&
+			data[i] != SIM_CSP_ENTRY_VALUE_ADDED_SERVICES)
+		i += 2;
+
+	if (i == total_length)
+		return;
+
+	if ((data[i + 1] & 0x80) != 0) {
+		if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+			set_registration_mode(netreg,
+						NETWORK_REGISTRATION_MODE_AUTO);
+
+		return;
+	}
+
+	set_registration_mode(netreg, NETWORK_REGISTRATION_MODE_AUTO_ONLY);
+}
+
+static void sim_csp_changed(int id, void *userdata)
+{
+	struct ofono_netreg *netreg = userdata;
+
+	ofono_sim_read(netreg->sim_context, SIM_EF_CPHS_CSP_FILEID,
+			OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+			sim_csp_read_cb, netreg);
+}
 
 static void init_registration_status(const struct ofono_error *error,
 					int status, int lac, int ci, int tech,
@@ -1395,13 +1475,23 @@ static void init_registration_status(const struct ofono_error *error,
 					signal_strength_callback, netreg);
 	}
 
-	if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO &&
+	if (netreg->mode != NETWORK_REGISTRATION_MODE_MANUAL &&
 		(status == NETWORK_REGISTRATION_STATUS_NOT_REGISTERED ||
 			status == NETWORK_REGISTRATION_STATUS_DENIED ||
 			status == NETWORK_REGISTRATION_STATUS_UNKNOWN)) {
 		if (netreg->driver->register_auto != NULL)
 			netreg->driver->register_auto(netreg, init_register,
 							netreg);
+	}
+
+	if (netreg->sim_context) {
+		ofono_sim_read(netreg->sim_context, SIM_EF_CPHS_CSP_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				sim_csp_read_cb, netreg);
+
+		ofono_sim_add_file_watch(netreg->sim_context,
+						SIM_EF_CPHS_CSP_FILEID,
+						sim_csp_changed, netreg, NULL);
 	}
 }
 
@@ -1447,7 +1537,8 @@ void ofono_netreg_strength_notify(struct ofono_netreg *netreg, int strength)
 	}
 
 	modem = __ofono_atom_get_modem(netreg->atom);
-	__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
+	__ofono_modem_foreach_registered_atom(modem,
+				OFONO_ATOM_TYPE_EMULATOR_HFP,
 				notify_emulator_strength,
 				GINT_TO_POINTER(netreg->signal_strength));
 }
@@ -1697,6 +1788,15 @@ void ofono_netreg_driver_unregister(const struct ofono_netreg_driver *d)
 	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
+#if defined(_EMULATOR_)
+static void emulator_remove_handler(struct ofono_atom *atom, void *data)
+{
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	ofono_emulator_remove_handler(em, data);
+}
+#endif
+
 static void netreg_unregister(struct ofono_atom *atom)
 {
 	struct ofono_netreg *netreg = __ofono_atom_get_data(atom);
@@ -1705,13 +1805,23 @@ static void netreg_unregister(struct ofono_atom *atom)
 	const char *path = __ofono_atom_get_path(atom);
 	GSList *l;
 
-	__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
-				notify_emulator_status,
-				GINT_TO_POINTER(0));
-	__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
-				notify_emulator_strength, GINT_TO_POINTER(0));
+#if defined(_EMULATOR_)
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						notify_emulator_status,
+						GINT_TO_POINTER(0));
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						notify_emulator_strength,
+						GINT_TO_POINTER(0));
+
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_remove_handler,
+						"+COPS");
 
 	__ofono_modem_remove_atom_watch(modem, netreg->hfp_watch);
+#endif
 
 	__ofono_watchlist_free(netreg->status_watches);
 	netreg->status_watches = NULL;
@@ -1818,7 +1928,9 @@ struct ofono_netreg *ofono_netreg_create(struct ofono_modem *modem,
 static void netreg_load_settings(struct ofono_netreg *netreg)
 {
 	const char *imsi;
-	int mode;
+	char *strmode;
+	gboolean upgrade = FALSE;
+	GError *error = NULL;
 
 	imsi = ofono_sim_get_imsi(netreg->sim);
 	if (imsi == NULL)
@@ -1831,14 +1943,47 @@ static void netreg_load_settings(struct ofono_netreg *netreg)
 
 	netreg->imsi = g_strdup(imsi);
 
-	mode = g_key_file_get_integer(netreg->settings, SETTINGS_GROUP,
-					"Mode", NULL);
+	/*
+	 * Try legacy (integer) value first.  We do this because g_key_file
+	 * does not really distinguish between integers and strings
+	 */
+	strmode = g_key_file_get_string(netreg->settings, SETTINGS_GROUP,
+					"Mode", &error);
 
-	if (mode >= 0 && mode <= 1)
-		netreg->mode = mode;
+	if (strmode == NULL)
+		upgrade = TRUE;
+	else if (g_str_equal(strmode, "auto"))
+		netreg->mode = NETWORK_REGISTRATION_MODE_AUTO;
+	else if (g_str_equal(strmode, "manual"))
+		netreg->mode = NETWORK_REGISTRATION_MODE_MANUAL;
+	else {
+		int mode;
 
-	g_key_file_set_integer(netreg->settings, SETTINGS_GROUP,
-				"Mode", netreg->mode);
+		mode = g_key_file_get_integer(netreg->settings, SETTINGS_GROUP,
+						"Mode", NULL);
+
+		switch (mode) {
+		case NETWORK_REGISTRATION_MODE_AUTO:
+		case NETWORK_REGISTRATION_MODE_MANUAL:
+			netreg->mode = mode;
+			break;
+		}
+
+		upgrade = TRUE;
+	}
+
+	g_free(strmode);
+
+	if (upgrade == FALSE)
+		return;
+
+	if (netreg->mode == NETWORK_REGISTRATION_MODE_MANUAL)
+		strmode = "manual";
+	else
+		strmode = "auto";
+
+	g_key_file_set_string(netreg->settings, SETTINGS_GROUP,
+				"Mode", strmode);
 }
 
 static void sim_pnn_opl_changed(int id, void *userdata)
@@ -1894,22 +2039,68 @@ static void sim_spn_spdi_changed(int id, void *userdata)
 			sim_spn_read_cb, netreg);
 }
 
+static void emulator_cops_cb(struct ofono_emulator *em,
+			struct ofono_emulator_request *req, void *userdata)
+{
+	struct ofono_netreg *netreg = userdata;
+	struct ofono_error result;
+	int val;
+	char name[17];
+	char buf[32];
+
+	result.error = 0;
+
+	switch (ofono_emulator_request_get_type(req)) {
+	case OFONO_EMULATOR_REQUEST_TYPE_SET:
+		ofono_emulator_request_next_number(req, &val);
+		if (val != 3)
+			goto fail;
+
+		ofono_emulator_request_next_number(req, &val);
+		if (val != 0)
+			goto fail;
+
+		result.type = OFONO_ERROR_TYPE_NO_ERROR;
+		ofono_emulator_send_final(em, &result);
+		break;
+
+	case OFONO_EMULATOR_REQUEST_TYPE_QUERY:
+		strncpy(name, get_operator_display_name(netreg), 16);
+		name[16] = '\0';
+		sprintf(buf, "+COPS: %d,0,\"%s\"", netreg->mode, name);
+		ofono_emulator_send_info(em, buf, TRUE);
+		result.type = OFONO_ERROR_TYPE_NO_ERROR;
+		ofono_emulator_send_final(em, &result);
+		break;
+
+	default:
+fail:
+		result.type = OFONO_ERROR_TYPE_FAILURE;
+		ofono_emulator_send_final(em, &result);
+	};
+}
+
+#if defined(_EMULATOR_)
+static void emulator_hfp_init(struct ofono_atom *atom, void *data)
+{
+	struct ofono_netreg *netreg = data;
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	notify_emulator_status(atom, GINT_TO_POINTER(netreg->status));
+	notify_emulator_strength(atom,
+				GINT_TO_POINTER(netreg->signal_strength));
+
+	ofono_emulator_add_handler(em, "+COPS", emulator_cops_cb, data, NULL);
+}
+
 static void emulator_hfp_watch(struct ofono_atom *atom,
 				enum ofono_atom_watch_condition cond,
 				void *data)
 {
-	struct ofono_netreg *netreg = data;
-	struct ofono_modem *modem = __ofono_atom_get_modem(netreg->atom);
-
-	if (cond == OFONO_ATOM_WATCH_CONDITION_REGISTERED) {
-		__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
-				notify_emulator_status,
-				GINT_TO_POINTER(netreg->status));
-		__ofono_modem_foreach_atom(modem, OFONO_ATOM_TYPE_EMULATOR_HFP,
-				notify_emulator_strength,
-				GINT_TO_POINTER(netreg->signal_strength));
-	}
+	if (cond == OFONO_ATOM_WATCH_CONDITION_REGISTERED)
+		emulator_hfp_init(atom, data);
 }
+#endif
 
 void ofono_netreg_register(struct ofono_netreg *netreg)
 {
@@ -1969,9 +2160,11 @@ void ofono_netreg_register(struct ofono_netreg *netreg)
 
 	__ofono_atom_register(netreg->atom, netreg_unregister);
 
+#if defined(_EMULATOR_)
 	netreg->hfp_watch = __ofono_modem_add_atom_watch(modem,
 					OFONO_ATOM_TYPE_EMULATOR_HFP,
 					emulator_hfp_watch, netreg, NULL);
+#endif
 }
 
 void ofono_netreg_remove(struct ofono_netreg *netreg)

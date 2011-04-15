@@ -40,15 +40,20 @@
 
 #define MAX_VOICE_CALLS 16
 
+#define VOICECALL_FLAG_SIM_ECC_READY 0x1
+
 GSList *g_drivers = NULL;
 
 struct ofono_voicecall {
 	GSList *call_list;
 	GSList *release_list;
 	GSList *multiparty_list;
-	GSList *en_list;  /* emergency number list */
-	GSList *new_en_list; /* Emergency numbers being read from SIM */
+	GHashTable *en_list; /* emergency number list */
+	GSList *sim_en_list; /* Emergency numbers already read from SIM */
+	GSList *new_sim_en_list; /* Emergency numbers being read from SIM */
+	char **nw_en_list; /* Emergency numbers from modem/network */
 	DBusMessage *pending;
+	uint32_t flags;
 	struct ofono_sim *sim;
 	struct ofono_sim_context *sim_context;
 	unsigned int sim_watch;
@@ -59,6 +64,7 @@ struct ofono_voicecall {
 	struct dial_request *dial_req;
 	GQueue *toneq;
 	guint tone_source;
+	unsigned int hfp_watch;
 };
 
 struct voicecall {
@@ -130,11 +136,12 @@ static gint call_compare(gconstpointer a, gconstpointer b)
 	return 0;
 }
 
-static void add_to_en_list(GSList **l, const char **list)
+static void add_to_en_list(struct ofono_voicecall *vc, char **list)
 {
 	int i = 0;
+
 	while (list[i])
-		*l = g_slist_prepend(*l, g_strdup(list[i++]));
+		g_hash_table_insert(vc->en_list, g_strdup(list[i++]), NULL);
 }
 
 static const char *disconnect_reason_to_string(enum ofono_disconnect_reason r)
@@ -287,8 +294,9 @@ static int tone_queue(struct ofono_voicecall *vc, const char *tone_str,
 	 */
 	for (i = 0; tone_str[i]; i++)
 		if (!g_ascii_isdigit(tone_str[i]) && tone_str[i] != 'p' &&
-				tone_str[i] != '*' && tone_str[i] != '#' &&
-				(tone_str[i] < 'A' || tone_str[i] > 'D'))
+				tone_str[i] != 'P' && tone_str[i] != '*' &&
+				tone_str[i] != '#' && (tone_str[i] < 'A' ||
+				tone_str[i] > 'D'))
 			return -EINVAL;
 
 	while ((entry = g_queue_peek_nth(vc->toneq, n++)) != NULL)
@@ -330,21 +338,10 @@ static void tone_request_finish(struct ofono_voicecall *vc,
 	g_free(entry);
 }
 
-static gint number_compare(gconstpointer a, gconstpointer b)
+static gboolean is_emergency_number(struct ofono_voicecall *vc,
+					const char *number)
 {
-	const char *s1 = a, *s2 = b;
-	return strcmp(s1, s2);
-}
-
-static gboolean voicecall_is_emergency(struct voicecall *v)
-{
-	struct ofono_call *call = v->call;
-	const char *lineid_str;
-
-	lineid_str = phone_number_to_string(&call->phone_number);
-
-	return g_slist_find_custom(v->vc->en_list, lineid_str,
-						number_compare) ? TRUE : FALSE;
+	return g_hash_table_lookup_extended(vc->en_list, number, NULL, NULL);
 }
 
 static void append_voicecall_properties(struct voicecall *v,
@@ -416,7 +413,7 @@ static void append_voicecall_properties(struct voicecall *v,
 		ofono_dbus_dict_append(dict, "Icon",
 						DBUS_TYPE_BYTE, &v->icon_id);
 
-	if (voicecall_is_emergency(v) == TRUE)
+	if (is_emergency_number(v->vc, callerid) == TRUE)
 		emergency_call = TRUE;
 	else
 		emergency_call = FALSE;
@@ -692,6 +689,109 @@ static void voicecall_emit_multiparty(struct voicecall *call, gboolean mpty)
 						&val);
 }
 
+#if defined(_EMULATOR_)
+static void emulator_call_status_cb(struct ofono_atom *atom, void *data)
+{
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	ofono_emulator_set_indicator(em, OFONO_EMULATOR_IND_CALL,
+						GPOINTER_TO_INT(data));
+}
+
+static void emulator_callsetup_status_cb(struct ofono_atom *atom, void *data)
+{
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	ofono_emulator_set_indicator(em, OFONO_EMULATOR_IND_CALLSETUP,
+						GPOINTER_TO_INT(data));
+}
+
+static void emulator_callheld_status_cb(struct ofono_atom *atom, void *data)
+{
+	struct ofono_emulator *em = __ofono_atom_get_data(atom);
+
+	ofono_emulator_set_indicator(em, OFONO_EMULATOR_IND_CALLHELD,
+						GPOINTER_TO_INT(data));
+}
+
+static void notify_emulator_call_status(struct ofono_voicecall *vc)
+{
+	struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
+	int status;
+	gboolean call = FALSE;
+	gboolean held = FALSE;
+	gboolean incoming = FALSE;
+	gboolean dialing = FALSE;
+	gboolean alerting = FALSE;
+	gboolean waiting = FALSE;
+	GSList *l;
+	struct voicecall *v;
+
+	for (l = vc->call_list; l; l = l->next) {
+		v = l->data;
+
+		switch (v->call->status) {
+		case CALL_STATUS_ACTIVE:
+			call = TRUE;
+			break;
+
+		case CALL_STATUS_HELD:
+			held = TRUE;
+			break;
+
+		case CALL_STATUS_DIALING:
+			dialing = TRUE;
+			break;
+
+		case CALL_STATUS_ALERTING:
+			alerting = TRUE;
+			break;
+
+		case CALL_STATUS_INCOMING:
+			incoming = TRUE;
+			break;
+
+		case CALL_STATUS_WAITING:
+			waiting = TRUE;
+			break;
+		}
+	}
+
+	status = call || held ? OFONO_EMULATOR_CALL_ACTIVE :
+					OFONO_EMULATOR_CALL_INACTIVE;
+
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_call_status_cb,
+						GINT_TO_POINTER(status));
+
+	if (incoming || waiting)
+		status = OFONO_EMULATOR_CALLSETUP_INCOMING;
+	else if (dialing)
+		status = OFONO_EMULATOR_CALLSETUP_OUTGOING;
+	else if (alerting)
+		status = OFONO_EMULATOR_CALLSETUP_ALERTING;
+	else
+		status = OFONO_EMULATOR_CALLSETUP_INACTIVE;
+
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_callsetup_status_cb,
+						GINT_TO_POINTER(status));
+
+	if (held)
+		status = call ? OFONO_EMULATOR_CALLHELD_MULTIPLE :
+					OFONO_EMULATOR_CALLHELD_ON_HOLD;
+	else
+		status = OFONO_EMULATOR_CALLHELD_NONE;
+
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_callheld_status_cb,
+						GINT_TO_POINTER(status));
+}
+#endif
+
 static void voicecall_set_call_status(struct voicecall *call, int status)
 {
 	DBusConnection *conn = ofono_dbus_get_connection();
@@ -713,6 +813,10 @@ static void voicecall_set_call_status(struct voicecall *call, int status)
 						OFONO_VOICECALL_INTERFACE,
 						"State", DBUS_TYPE_STRING,
 						&status_str);
+
+#if defined(_EMULATOR_)
+	notify_emulator_call_status(call->vc);
+#endif
 
 	if (status == CALL_STATUS_ACTIVE &&
 		(old_status == CALL_STATUS_INCOMING ||
@@ -787,7 +891,7 @@ static void voicecall_set_call_lineid(struct voicecall *v,
 						"LineIdentification",
 						DBUS_TYPE_STRING, &lineid_str);
 
-	if (voicecall_is_emergency(v)) {
+	if (is_emergency_number(v->vc, lineid_str)) {
 		dbus_bool_t emergency_call = TRUE;
 
 		ofono_dbus_signal_property_changed(conn, path,
@@ -1043,7 +1147,11 @@ static void voicecalls_emit_call_added(struct ofono_voicecall *vc,
 	DBusMessageIter dict;
 	const char *path;
 
-	path = __ofono_atom_get_path(vc->atom);
+#if defined(_EMULATOR_)
+	notify_emulator_call_status(vc);
+#endif
+
+    path = __ofono_atom_get_path(vc->atom);
 
 	signal = dbus_message_new_signal(path,
 					OFONO_VOICECALL_MANAGER_INTERFACE,
@@ -1069,7 +1177,7 @@ static void voicecalls_emit_call_added(struct ofono_voicecall *vc,
 static void voicecalls_release_queue(struct ofono_voicecall *vc, GSList *calls)
 {
 	GSList *l;
-	struct ofono_call *call;
+	struct voicecall *call;
 
 	g_slist_free(vc->release_list);
 	vc->release_list = NULL;
@@ -1077,7 +1185,7 @@ static void voicecalls_release_queue(struct ofono_voicecall *vc, GSList *calls)
 	for (l = calls; l; l = l->next) {
 		call = l->data;
 
-		if (call->status == CALL_STATUS_WAITING)
+		if (call->call->status == CALL_STATUS_WAITING)
 			continue;
 
 		vc->release_list = g_slist_prepend(vc->release_list, l->data);
@@ -1124,8 +1232,9 @@ static DBusMessage *manager_get_properties(DBusConnection *conn,
 	DBusMessageIter iter;
 	DBusMessageIter dict;
 	int i;
-	GSList *l;
 	char **list;
+	GHashTableIter ht_iter;
+	gpointer key, value;
 
 	reply = dbus_message_new_method_return(msg);
 	if (reply == NULL)
@@ -1138,14 +1247,15 @@ static DBusMessage *manager_get_properties(DBusConnection *conn,
 					&dict);
 
 	/* property EmergencyNumbers */
-	list = g_new0(char *, g_slist_length(vc->en_list) + 1);
+	list = g_new0(char *, g_hash_table_size(vc->en_list) + 1);
+	g_hash_table_iter_init(&ht_iter, vc->en_list);
 
-	for (i = 0, l = vc->en_list; l; l = l->next, i++)
-		list[i] = g_strdup(l->data);
+	for (i = 0; g_hash_table_iter_next(&ht_iter, &key, &value); i++)
+		list[i] = key;
 
 	ofono_dbus_dict_append_array(&dict, "EmergencyNumbers",
 					DBUS_TYPE_STRING, &list);
-	g_strfreev(list);
+	g_free(list);
 
 	dbus_message_iter_close_container(&iter, &dict);
 
@@ -1284,8 +1394,14 @@ static void manager_dial_callback(const struct ofono_error *error, void *data)
 
 		dbus_message_append_args(reply, DBUS_TYPE_OBJECT_PATH, &path,
 						DBUS_TYPE_INVALID);
-	} else
+	} else {
+		struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
+
+		if (is_emergency_number(vc, number) == TRUE)
+			__ofono_modem_dec_emergency_mode(modem);
+
 		reply = __ofono_error_failed(vc->pending);
+	}
 
 	__ofono_dbus_pending_reply(&vc->pending, reply);
 
@@ -1297,6 +1413,7 @@ static DBusMessage *manager_dial(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	struct ofono_voicecall *vc = data;
+	struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
 	const char *number;
 	struct ofono_phone_number ph;
 	const char *clirstr;
@@ -1319,6 +1436,9 @@ static DBusMessage *manager_dial(DBusConnection *conn,
 	if (clir_string_to_clir(clirstr, &clir) == FALSE)
 		return __ofono_error_invalid_format(msg);
 
+	if (ofono_modem_get_online(modem) == FALSE)
+		return __ofono_error_not_available(msg);
+
 	if (vc->driver->dial == NULL)
 		return __ofono_error_not_implemented(msg);
 
@@ -1331,6 +1451,9 @@ static DBusMessage *manager_dial(DBusConnection *conn,
 
 	if (voicecalls_have_active(vc) && voicecalls_have_held(vc))
 		return __ofono_error_failed(msg);
+
+	if (is_emergency_number(vc, number) == TRUE)
+		__ofono_modem_inc_emergency_mode(modem);
 
 	vc->pending = dbus_message_ref(msg);
 
@@ -1894,6 +2017,7 @@ void ofono_voicecall_disconnected(struct ofono_voicecall *vc, int id,
 	struct voicecall *call;
 	time_t ts;
 	enum call_status prev_status;
+	const char *number;
 
 	DBG("Got disconnection event for id: %d, reason: %d", id, reason);
 
@@ -1933,6 +2057,10 @@ void ofono_voicecall_disconnected(struct ofono_voicecall *vc, int id,
 
 	if (reason != OFONO_DISCONNECT_REASON_UNKNOWN)
 		voicecall_emit_disconnect_reason(call, reason);
+
+	number = phone_number_to_string(&call->call->phone_number);
+	if (is_emergency_number(vc, number) == TRUE)
+		__ofono_modem_dec_emergency_mode(modem);
 
 	voicecall_set_call_status(call, CALL_STATUS_DISCONNECTED);
 
@@ -2053,47 +2181,72 @@ static void emit_en_list_changed(struct ofono_voicecall *vc)
 	DBusConnection *conn = ofono_dbus_get_connection();
 	const char *path = __ofono_atom_get_path(vc->atom);
 	char **list;
-	GSList *l;
 	int i;
+	GHashTableIter iter;
+	gpointer key, value;
 
-	list = g_new0(char *, g_slist_length(vc->en_list) + 1);
-	for (i = 0, l = vc->en_list; l; l = l->next, i++)
-		list[i] = g_strdup(l->data);
+	list = g_new0(char *, g_hash_table_size(vc->en_list) + 1);
+	g_hash_table_iter_init(&iter, vc->en_list);
+
+	for (i = 0; g_hash_table_iter_next(&iter, &key, &value); i++)
+		list[i] = key;
 
 	ofono_dbus_signal_array_property_changed(conn, path,
 				OFONO_VOICECALL_MANAGER_INTERFACE,
 				"EmergencyNumbers", DBUS_TYPE_STRING, &list);
 
-	g_strfreev(list);
+	g_free(list);
 }
 
 static void set_new_ecc(struct ofono_voicecall *vc)
 {
-	int i = 0;
+	g_hash_table_destroy(vc->en_list);
 
-	g_slist_foreach(vc->en_list, (GFunc) g_free, NULL);
-	g_slist_free(vc->en_list);
-	vc->en_list = NULL;
+	vc->en_list = g_hash_table_new_full(g_str_hash, g_str_equal,
+							g_free, NULL);
 
-	vc->en_list = vc->new_en_list;
-	vc->new_en_list = NULL;
+	/* Emergency numbers from modem/network */
+	if (vc->nw_en_list)
+		add_to_en_list(vc, vc->nw_en_list);
 
-	while (default_en_list[i]) {
+	/* Emergency numbers read from SIM */
+	if (vc->flags & VOICECALL_FLAG_SIM_ECC_READY) {
 		GSList *l;
 
-		for (l = vc->en_list; l; l = l->next)
-			if (!strcmp(l->data, default_en_list[i]))
-				break;
+		for (l = vc->sim_en_list; l; l = l->next)
+			g_hash_table_insert(vc->en_list, g_strdup(l->data),
+							NULL);
+	} else
+		add_to_en_list(vc, (char **) default_en_list_no_sim);
 
-		if (l == NULL)
-			vc->en_list = g_slist_prepend(vc->en_list,
-						g_strdup(default_en_list[i]));
+	/* Default emergency numbers */
+	add_to_en_list(vc, (char **) default_en_list);
 
-		i++;
+	emit_en_list_changed(vc);
+}
+
+static void free_sim_ecc_numbers(struct ofono_voicecall *vc, gboolean old_only)
+{
+	/*
+	 * Free the currently being read EN list, just in case the
+	 * we're still reading them
+	 */
+	if (old_only == FALSE) {
+		if (vc->new_sim_en_list) {
+			g_slist_foreach(vc->new_sim_en_list, (GFunc) g_free,
+					NULL);
+			g_slist_free(vc->new_sim_en_list);
+			vc->new_sim_en_list = NULL;
+		}
+
+		vc->flags &= ~VOICECALL_FLAG_SIM_ECC_READY;
 	}
 
-	vc->en_list = g_slist_reverse(vc->en_list);
-	emit_en_list_changed(vc);
+	if (vc->sim_en_list) {
+		g_slist_foreach(vc->sim_en_list, (GFunc) g_free, NULL);
+		g_slist_free(vc->sim_en_list);
+		vc->sim_en_list = NULL;
+	}
 }
 
 static void ecc_g2_read_cb(int ok, int total_length, int record,
@@ -2113,15 +2266,19 @@ static void ecc_g2_read_cb(int ok, int total_length, int record,
 		return;
 	}
 
+	free_sim_ecc_numbers(vc, TRUE);
+
 	total_length /= 3;
 	while (total_length--) {
 		extract_bcd_number(data, 3, en);
 		data += 3;
 
 		if (en[0] != '\0')
-			vc->new_en_list = g_slist_prepend(vc->new_en_list,
+			vc->sim_en_list = g_slist_prepend(vc->sim_en_list,
 								g_strdup(en));
 	}
+
+	vc->flags |= VOICECALL_FLAG_SIM_ECC_READY;
 
 	set_new_ecc(vc);
 }
@@ -2148,16 +2305,31 @@ static void ecc_g3_read_cb(int ok, int total_length, int record,
 	extract_bcd_number(data, 3, en);
 
 	if (en[0] != '\0')
-		vc->new_en_list = g_slist_prepend(vc->new_en_list,
+		vc->new_sim_en_list = g_slist_prepend(vc->new_sim_en_list,
 							g_strdup(en));
 
 	if (record != total)
 		return;
 
 check:
-	if (!ok && vc->new_en_list == NULL)
+	if (!ok && vc->new_sim_en_list == NULL)
 		return;
 
+	free_sim_ecc_numbers(vc, TRUE);
+	vc->sim_en_list = vc->new_sim_en_list;
+	vc->new_sim_en_list = NULL;
+
+	vc->flags |= VOICECALL_FLAG_SIM_ECC_READY;
+
+	set_new_ecc(vc);
+}
+
+void ofono_voicecall_en_list_notify(struct ofono_voicecall *vc,
+						char **nw_en_list)
+{
+	g_strfreev(vc->nw_en_list);
+
+	vc->nw_en_list = g_strdupv(nw_en_list);
 	set_new_ecc(vc);
 }
 
@@ -2188,10 +2360,42 @@ static void voicecall_unregister(struct ofono_atom *atom)
 	const char *path = __ofono_atom_get_path(atom);
 	GSList *l;
 
+#if defined(_EMULATOR_)
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_call_status_cb, 0);
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_callsetup_status_cb,
+						0);
+	__ofono_modem_foreach_registered_atom(modem,
+						OFONO_ATOM_TYPE_EMULATOR_HFP,
+						emulator_callheld_status_cb, 0);
+
+	__ofono_modem_remove_atom_watch(modem, vc->hfp_watch);
+#endif
+
+	if (vc->sim_state_watch) {
+		ofono_sim_remove_state_watch(vc->sim, vc->sim_state_watch);
+		vc->sim_state_watch = 0;
+	}
+
 	if (vc->sim_watch) {
 		__ofono_modem_remove_atom_watch(modem, vc->sim_watch);
 		vc->sim_watch = 0;
 	}
+
+	vc->sim = NULL;
+
+	free_sim_ecc_numbers(vc, FALSE);
+
+	if (vc->nw_en_list) {
+		g_strfreev(vc->nw_en_list);
+		vc->nw_en_list = NULL;
+	}
+
+	g_hash_table_destroy(vc->en_list);
+	vc->en_list = NULL;
 
 	if (vc->dial_req)
 		dial_request_finish(vc);
@@ -2200,6 +2404,7 @@ static void voicecall_unregister(struct ofono_atom *atom)
 		voicecall_dbus_unregister(vc, l->data);
 
 	g_slist_free(vc->call_list);
+	vc->call_list = NULL;
 
 	ofono_modem_remove_interface(modem, OFONO_VOICECALL_MANAGER_INTERFACE);
 	g_dbus_unregister_interface(conn, path,
@@ -2217,24 +2422,6 @@ static void voicecall_remove(struct ofono_atom *atom)
 
 	if (vc->driver && vc->driver->remove)
 		vc->driver->remove(vc);
-
-	if (vc->en_list) {
-		g_slist_foreach(vc->en_list, (GFunc) g_free, NULL);
-		g_slist_free(vc->en_list);
-		vc->en_list = NULL;
-	}
-
-	if (vc->new_en_list) {
-		g_slist_foreach(vc->new_en_list, (GFunc) g_free, NULL);
-		g_slist_free(vc->new_en_list);
-		vc->new_en_list = NULL;
-	}
-
-	if (vc->sim_state_watch) {
-		ofono_sim_remove_state_watch(vc->sim, vc->sim_state_watch);
-		vc->sim_state_watch = 0;
-		vc->sim = NULL;
-	}
 
 	if (vc->tone_source) {
 		g_source_remove(vc->tone_source);
@@ -2290,7 +2477,7 @@ struct ofono_voicecall *ofono_voicecall_create(struct ofono_modem *modem,
 	return vc;
 }
 
-static void read_ecc_numbers(int id, void *userdata)
+static void read_sim_ecc_numbers(int id, void *userdata)
 {
 	struct ofono_voicecall *vc = userdata;
 
@@ -2312,10 +2499,10 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 		if (vc->sim_context == NULL)
 			vc->sim_context = ofono_sim_context_create(vc->sim);
 
-		read_ecc_numbers(SIM_EFECC_FILEID, vc);
+		read_sim_ecc_numbers(SIM_EFECC_FILEID, vc);
 
 		ofono_sim_add_file_watch(vc->sim_context, SIM_EFECC_FILEID,
-						read_ecc_numbers, vc, NULL);
+						read_sim_ecc_numbers, vc, NULL);
 		break;
 	case OFONO_SIM_STATE_NOT_PRESENT:
 		/* TODO: Must release all non-emergency calls */
@@ -2325,17 +2512,7 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 			vc->sim_context = NULL;
 		}
 
-		/*
-		 * Free the currently being read EN list, just in case the
-		 * SIM is removed when we're still reading them
-		 */
-		if (vc->new_en_list) {
-			g_slist_foreach(vc->new_en_list, (GFunc) g_free, NULL);
-			g_slist_free(vc->new_en_list);
-			vc->new_en_list = NULL;
-		}
-
-		add_to_en_list(&vc->new_en_list, default_en_list_no_sim);
+		free_sim_ecc_numbers(vc, FALSE);
 		set_new_ecc(vc);
 	default:
 		break;
@@ -2362,12 +2539,21 @@ static void sim_watch(struct ofono_atom *atom,
 	sim_state_watch(ofono_sim_get_state(sim), vc);
 }
 
+#if defined(_EMULATOR_)
+static void emulator_hfp_watch(struct ofono_atom *atom,
+				enum ofono_atom_watch_condition cond,
+				void *data)
+{
+	if (cond == OFONO_ATOM_WATCH_CONDITION_REGISTERED)
+		notify_emulator_call_status(data);
+}
+#endif
+
 void ofono_voicecall_register(struct ofono_voicecall *vc)
 {
 	DBusConnection *conn = ofono_dbus_get_connection();
 	struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
 	const char *path = __ofono_atom_get_path(vc->atom);
-	struct ofono_atom *sim_atom;
 
 	if (!g_dbus_register_interface(conn, path,
 					OFONO_VOICECALL_MANAGER_INTERFACE,
@@ -2381,23 +2567,27 @@ void ofono_voicecall_register(struct ofono_voicecall *vc)
 
 	ofono_modem_add_interface(modem, OFONO_VOICECALL_MANAGER_INTERFACE);
 
+	vc->en_list = g_hash_table_new_full(g_str_hash, g_str_equal,
+							g_free, NULL);
+
 	/*
 	 * Start out with the 22.101 mandated numbers, if we have a SIM and
 	 * the SIM contains EFecc, then we update the list once we've read them
 	 */
-	add_to_en_list(&vc->en_list, default_en_list_no_sim);
-	add_to_en_list(&vc->en_list, default_en_list);
+	add_to_en_list(vc, (char **) default_en_list_no_sim);
+	add_to_en_list(vc, (char **) default_en_list);
 
 	vc->sim_watch = __ofono_modem_add_atom_watch(modem,
 						OFONO_ATOM_TYPE_SIM,
 						sim_watch, vc, NULL);
 
-	sim_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_SIM);
-
-	if (sim_atom && __ofono_atom_get_registered(sim_atom))
-		sim_watch(sim_atom, OFONO_ATOM_WATCH_CONDITION_REGISTERED, vc);
-
 	__ofono_atom_register(vc->atom, voicecall_unregister);
+
+#if defined(_EMULATOR_)
+	vc->hfp_watch = __ofono_modem_add_atom_watch(modem,
+					OFONO_ATOM_TYPE_EMULATOR_HFP,
+					emulator_hfp_watch, vc, NULL);
+#endif
 }
 
 void ofono_voicecall_remove(struct ofono_voicecall *vc)
@@ -2457,14 +2647,20 @@ ofono_bool_t __ofono_voicecall_is_busy(struct ofono_voicecall *vc,
 static void dial_request_cb(const struct ofono_error *error, void *data)
 {
 	struct ofono_voicecall *vc = data;
+	const char *number = phone_number_to_string(&vc->dial_req->ph);
 	gboolean need_to_emit;
 	struct voicecall *v;
 
-	v = dial_handle_result(vc, error,
-				phone_number_to_string(&vc->dial_req->ph),
-				&need_to_emit);
+	v = dial_handle_result(vc, error, number, &need_to_emit);
 
 	if (v == NULL) {
+		if (is_emergency_number(vc, number) == TRUE) {
+			struct ofono_modem *modem =
+				__ofono_atom_get_modem(vc->atom);
+
+			__ofono_modem_dec_emergency_mode(modem);
+		}
+
 		dial_request_finish(vc);
 		return;
 	}
@@ -2491,6 +2687,14 @@ static void dial_request_cb(const struct ofono_error *error, void *data)
 
 static void dial_request(struct ofono_voicecall *vc)
 {
+	const char *number = phone_number_to_string(&vc->dial_req->ph);
+
+	if (is_emergency_number(vc, number) == TRUE) {
+		struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
+
+		__ofono_modem_inc_emergency_mode(modem);
+	}
+
 	vc->driver->dial(vc, &vc->dial_req->ph, OFONO_CLIR_OPTION_DEFAULT,
 				dial_request_cb, vc);
 }

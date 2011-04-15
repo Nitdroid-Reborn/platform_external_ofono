@@ -73,7 +73,6 @@ struct ofono_call_forwarding {
 static void get_query_next_cf_cond(struct ofono_call_forwarding *cf);
 static void set_query_next_cf_cond(struct ofono_call_forwarding *cf);
 static void ss_set_query_next_cf_cond(struct ofono_call_forwarding *cf);
-static void cf_unregister_ss_controls(struct ofono_call_forwarding *cf);
 
 struct cf_ss_request {
 	int ss_type;
@@ -1279,6 +1278,9 @@ static void sim_cfis_read_cb(int ok, int total_length, int record,
 
 	cf->cfis_record_id = record;
 
+	if (cf->flags & CALL_FORWARDING_FLAG_CACHED)
+		return;
+
 	/*
 	 * For now we only support Voice, although Fax & all Data
 	 * basic services are applicable as well.
@@ -1343,6 +1345,9 @@ static void sim_cphs_cff_read_cb(int ok, int total_length, int record,
 
 	cf->flags |= CALL_FORWARDING_FLAG_CPHS_CFF;
 
+	if (cf->flags & CALL_FORWARDING_FLAG_CACHED)
+		return;
+
 	/*
 	 * For now we only support Voice, although Fax & all Data
 	 * basic services are applicable as well.
@@ -1356,39 +1361,6 @@ static void sim_cphs_cff_read_cb(int ok, int total_length, int record,
 					OFONO_CALL_FORWARDING_INTERFACE,
 					"ForwardingFlagOnSim",
 					DBUS_TYPE_BOOLEAN, &cfu_voice);
-}
-
-static void sim_read_cf_indicator(struct ofono_call_forwarding *cf)
-{
-	if (__ofono_sim_service_available(cf->sim,
-			SIM_UST_SERVICE_CFIS,
-			SIM_SST_SERVICE_CFIS) == TRUE)
-		ofono_sim_read(cf->sim_context, SIM_EFCFIS_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_FIXED,
-				sim_cfis_read_cb, cf);
-	else
-		ofono_sim_read(cf->sim_context, SIM_EF_CPHS_CFF_FILEID,
-				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
-				sim_cphs_cff_read_cb, cf);
-}
-
-int ofono_call_forwarding_driver_register(const struct ofono_call_forwarding_driver *d)
-{
-	DBG("driver: %p, name: %s", d, d->name);
-
-	if (d->probe == NULL)
-		return -EINVAL;
-
-	g_drivers = g_slist_prepend(g_drivers, (void *) d);
-
-	return 0;
-}
-
-void ofono_call_forwarding_driver_unregister(const struct ofono_call_forwarding_driver *d)
-{
-	DBG("driver: %p, name: %s", d, d->name);
-
-	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void call_forwarding_unregister(struct ofono_atom *atom)
@@ -1412,6 +1384,68 @@ static void call_forwarding_unregister(struct ofono_atom *atom)
 
 	if (cf->ussd_watch)
 		__ofono_modem_remove_atom_watch(modem, cf->ussd_watch);
+
+	cf->flags = 0;
+}
+
+static void sim_cfis_changed(int id, void *userdata)
+{
+	struct ofono_call_forwarding *cf = userdata;
+
+	if (!(cf->flags & CALL_FORWARDING_FLAG_CACHED))
+		return;
+
+	/*
+	 * If the values are cached it's because at least one client
+	 * requested them and we need to notify them about this
+	 * change.  However the authoritative source of current
+	 * Call-Forwarding settings is the network operator and the
+	 * query can take a noticeable amount of time.  Instead of
+	 * sending PropertyChanged, we reregister the Call Forwarding
+	 * atom.  The client will invoke GetProperties only if it
+	 * is still interested.
+	 */
+	call_forwarding_unregister(cf->atom);
+	ofono_call_forwarding_register(cf);
+}
+
+static void sim_read_cf_indicator(struct ofono_call_forwarding *cf)
+{
+	if (__ofono_sim_service_available(cf->sim,
+			SIM_UST_SERVICE_CFIS,
+			SIM_SST_SERVICE_CFIS) == TRUE) {
+		ofono_sim_read(cf->sim_context, SIM_EFCFIS_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_FIXED,
+				sim_cfis_read_cb, cf);
+		ofono_sim_add_file_watch(cf->sim_context, SIM_EFCFIS_FILEID,
+						sim_cfis_changed, cf, NULL);
+	} else {
+		ofono_sim_read(cf->sim_context, SIM_EF_CPHS_CFF_FILEID,
+				OFONO_SIM_FILE_STRUCTURE_TRANSPARENT,
+				sim_cphs_cff_read_cb, cf);
+		ofono_sim_add_file_watch(cf->sim_context,
+						SIM_EF_CPHS_CFF_FILEID,
+						sim_cfis_changed, cf, NULL);
+	}
+}
+
+int ofono_call_forwarding_driver_register(const struct ofono_call_forwarding_driver *d)
+{
+	DBG("driver: %p, name: %s", d, d->name);
+
+	if (d->probe == NULL)
+		return -EINVAL;
+
+	g_drivers = g_slist_prepend(g_drivers, (void *) d);
+
+	return 0;
+}
+
+void ofono_call_forwarding_driver_unregister(const struct ofono_call_forwarding_driver *d)
+{
+	DBG("driver: %p, name: %s", d, d->name);
+
+	g_drivers = g_slist_remove(g_drivers, (void *) d);
 }
 
 static void call_forwarding_remove(struct ofono_atom *atom)
@@ -1486,7 +1520,6 @@ void ofono_call_forwarding_register(struct ofono_call_forwarding *cf)
 	const char *path = __ofono_atom_get_path(cf->atom);
 	struct ofono_modem *modem = __ofono_atom_get_modem(cf->atom);
 	struct ofono_atom *sim_atom;
-	struct ofono_atom *ussd_atom;
 
 	if (!g_dbus_register_interface(conn, path,
 					OFONO_CALL_FORWARDING_INTERFACE,
@@ -1512,12 +1545,6 @@ void ofono_call_forwarding_register(struct ofono_call_forwarding *cf)
 	cf->ussd_watch = __ofono_modem_add_atom_watch(modem,
 					OFONO_ATOM_TYPE_USSD,
 					ussd_watch, cf, NULL);
-
-	ussd_atom = __ofono_modem_find_atom(modem, OFONO_ATOM_TYPE_USSD);
-
-	if (ussd_atom && __ofono_atom_get_registered(ussd_atom))
-		ussd_watch(ussd_atom, OFONO_ATOM_WATCH_CONDITION_REGISTERED,
-				cf);
 
 	__ofono_atom_register(cf->atom, call_forwarding_unregister);
 }

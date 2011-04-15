@@ -1,4 +1,4 @@
-SimToolkit Hierarchy [experimental]
+SimToolkit Hierarchy
 ===============
 
 Service		org.ofono
@@ -77,7 +77,7 @@ Properties	string IdleModeText [readonly]
 
 			Contains the identifier of the icon for the main menu.
 
-SimToolkitAgent Hierarchy [experimental]
+SimToolkitAgent Hierarchy
 ===============
 
 Service		unique name
@@ -96,6 +96,7 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			an error given below.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 			Implementation notes:
 
@@ -111,6 +112,7 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			cleared prior to the display of this text.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 					 [service].Error.SimToolkit.Busy
 
 			Implementation notes:
@@ -154,6 +156,7 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			should be opaque.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 			Implementation notes:
 
@@ -171,6 +174,7 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			are expected.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 		string RequestKey(string alpha, byte icon_id)
 
@@ -179,6 +183,7 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			for the request.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 		string RequestDigit(string alpha, byte icon_id)
 
@@ -186,12 +191,14 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			expected.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 		boolean RequestConfirmation(string alpha, byte icon_id)
 
 			Asks the agent to get confirmation from the user.
 
 			Possible Errors: [service].Error.SimToolkit.GoBack
+					 [service].Error.SimToolkit.EndSession
 
 		boolean ConfirmCallSetup(string information, byte icon_id)
 
@@ -244,7 +251,8 @@ Methods		byte RequestSelection(string title, byte icon_id,
 
 			Possible Errors: [service].Error.SimToolkit.EndSession
 
-		void DisplayActionInformation(string text, byte icon_id)
+		void DisplayActionInformation(string text,
+						byte icon_id) [noreply]
 
 			Supplies a text string and/or icon concerning the
 			current activity in the terminal and UICC.  The
@@ -259,6 +267,24 @@ Methods		byte RequestSelection(string title, byte icon_id,
 			browser. If confirmed, then the agent should send
 			confirmation message to oFono and then should open
 			the launch browser with the given url.
+
+		void DisplayAction(string text, byte icon_id)
+
+			Supplies a text string and/or icon concerning the
+			current activity in the terminal and UICC. The
+			text should be displayed to the user on screen
+			until the call is canceled using Cancel() or until the
+			user decides to end the session.
+
+			Possible Errors: [service].Error.SimToolkit.EndSession
+
+		boolean ConfirmOpenChannel(string information,
+						byte icon_id) [experimental]
+
+			Asks the agent to request user to confirm the channel
+			set-up.
+
+			Possible Errors: [service].Error.SimToolkit.EndSession
 
 		void Cancel() [noreply]
 

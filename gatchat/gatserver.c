@@ -94,6 +94,9 @@ struct v250_settings {
 	int res_format;			/* set by X<val> */
 	int c109;			/* set by &C<val> */
 	int c108;			/* set by &D<val> */
+	char l;				/* set by L<val> */
+	char m;				/* set by M<val> */
+	char dial_mode;			/* set by P or T */
 };
 
 /* AT command set that server supported */
@@ -274,9 +277,31 @@ static gboolean get_result_value(GAtServer *server, GAtResult *result,
 	if (val < min || val > max)
 		return FALSE;
 
-	*value = val;
+	if (value)
+		*value = val;
 
 	return TRUE;
+}
+
+static void v250_settings_create(struct v250_settings *v250)
+{
+	v250->s0 = 0;
+	v250->s3 = '\r';
+	v250->s4 = '\n';
+	v250->s5 = '\b';
+	v250->s6 = 2;
+	v250->s7 = 50;
+	v250->s8 = 2;
+	v250->s10 = 2;
+	v250->echo = TRUE;
+	v250->quiet = FALSE;
+	v250->is_v1 = TRUE;
+	v250->res_format = 0;
+	v250->c109 = 1;
+	v250->c108 = 0;
+	v250->l = 0;
+	v250->m = 1;
+	v250->dial_mode = 'T';
 }
 
 static void s_template_cb(GAtServerRequestType type, GAtResult *result,
@@ -339,6 +364,18 @@ static void at_s5_cb(GAtServer *server, GAtServerRequestType type,
 			GAtResult *result, gpointer user_data)
 {
 	s_template_cb(type, result, server, &server->v250.s5, "S5", 0, 127);
+}
+
+static void at_l_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	s_template_cb(type, result, server, &server->v250.l, "L", 0, 3);
+}
+
+static void at_m_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	s_template_cb(type, result, server, &server->v250.m, "M", 0, 2);
 }
 
 static void at_template_cb(GAtServerRequestType type, GAtResult *result,
@@ -444,6 +481,79 @@ static void at_c108_cb(GAtServer *server, GAtServerRequestType type,
 			GAtResult *result, gpointer user_data)
 {
 	at_template_cb(type, result, server, &server->v250.c108, "&D", 0, 2, 2);
+}
+
+/* According to ITU V.250 6.3.2 and 6.3.3: "Implementation of this command
+ * is mandatory; however, if DTMF or pulse dialling is not implemented,
+ * this command will have no effect"
+ */
+static void at_t_cb(GAtServer *server, GAtServerRequestType type,
+					GAtResult *result, gpointer user_data)
+{
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		server->v250.dial_mode = 'T';
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
+}
+
+static void at_p_cb(GAtServer *server, GAtServerRequestType type,
+					GAtResult *result, gpointer user_data)
+{
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		server->v250.dial_mode = 'P';
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
+}
+
+static void at_f_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_SET:
+		if (!get_result_value(server, result, 0, 0, NULL)) {
+			g_at_server_send_final(server,
+						G_AT_SERVER_RESULT_ERROR);
+			return;
+		}
+		/* intentional fallback here */
+
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		/* default behavior on AT&F same as ATZ */
+		v250_settings_create(&server->v250);
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
+}
+
+static void at_z_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		v250_settings_create(&server->v250);
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
 }
 
 static inline gboolean is_extended_command_prefix(const char c)
@@ -1073,24 +1183,6 @@ static void server_resume(GAtServer *server)
 	g_at_io_set_read_handler(server->io, new_bytes, server);
 }
 
-static void v250_settings_create(struct v250_settings *v250)
-{
-	v250->s0 = 0;
-	v250->s3 = '\r';
-	v250->s4 = '\n';
-	v250->s5 = '\b';
-	v250->s6 = 2;
-	v250->s7 = 50;
-	v250->s8 = 2;
-	v250->s10 = 2;
-	v250->echo = TRUE;
-	v250->quiet = FALSE;
-	v250->is_v1 = TRUE;
-	v250->res_format = 0;
-	v250->c109 = 1;
-	v250->c108 = 0;
-}
-
 static void at_notify_node_destroy(gpointer data)
 {
 	struct at_command *node = data;
@@ -1117,6 +1209,12 @@ static void basic_command_register(GAtServer *server)
 	g_at_server_register(server, "S10", at_s10_cb, NULL, NULL);
 	g_at_server_register(server, "&C", at_c109_cb, NULL, NULL);
 	g_at_server_register(server, "&D", at_c108_cb, NULL, NULL);
+	g_at_server_register(server, "Z", at_z_cb, NULL, NULL);
+	g_at_server_register(server, "&F", at_f_cb, NULL, NULL);
+	g_at_server_register(server, "L", at_l_cb, NULL, NULL);
+	g_at_server_register(server, "M", at_m_cb, NULL, NULL);
+	g_at_server_register(server, "T", at_t_cb, NULL, NULL);
+	g_at_server_register(server, "P", at_p_cb, NULL, NULL);
 }
 
 GAtServer *g_at_server_new(GIOChannel *io)

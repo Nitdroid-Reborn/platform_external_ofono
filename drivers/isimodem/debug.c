@@ -34,8 +34,12 @@
 
 #define OFONO_API_SUBJECT_TO_CHANGE
 #include <ofono/log.h>
+#include <ofono/modem.h>
+#include <ofono/sim.h>
 
 #include "debug.h"
+
+#define COMMON_MESSAGE	0xF0
 
 #define _(X) case X: return #X
 
@@ -45,10 +49,14 @@ const char *pn_resource_name(int value)
 		_(PN_NETWORK);
 		_(PN_MODEM_NETWORK);
 		_(PN_PHONE_INFO);
+		_(PN_MODEM_INFO);
+		_(PN_EPOC_INFO);
 		_(PN_SS);
 		_(PN_CALL);
+		_(PN_MODEM_CALL);
 		_(PN_SMS);
 		_(PN_SIM);
+		_(PN_SECURITY);
 		_(PN_MTC);
 		_(PN_GSS);
 		_(PN_GPDS);
@@ -70,7 +78,6 @@ const char *ss_message_id_name(enum ss_message_id value)
 		_(SS_GSM_USSD_RECEIVE_IND);
 		_(SS_STATUS_IND);
 		_(SS_SERVICE_COMPLETED_IND);
-		_(SS_COMMON_MESSAGE);
 	}
 	return "SS_<UNKNOWN>";
 }
@@ -144,7 +151,6 @@ const char *mtc_message_id_name(enum mtc_message_id value)
 		_(MTC_STARTUP_SYNQ_RESP);
 		_(MTC_SHUTDOWN_SYNC_RESP);
 		_(MTC_STATE_INFO_IND);
-		_(MTC_COMMON_MESSAGE);
 	}
 	return "MTC_<UNKNOWN>";
 }
@@ -456,7 +462,6 @@ const char *sms_message_id_name(enum sms_message_id value)
 		_(SMS_RECEIVE_MESSAGE_REQ);
 		_(SMS_RECEIVE_MESSAGE_RESP);
 		_(SMS_RECEIVED_MSG_IND);
-		_(SMS_COMMON_MESSAGE);
 	}
 	return "SMS_<UNKNOWN>";
 }
@@ -473,11 +478,12 @@ const char *sms_subblock_name(enum sms_subblock value)
 		_(SMS_GSM_ROUTING);
 		_(SMS_GSM_CB_MESSAGE);
 		_(SMS_GSM_TPDU);
-		_(SMS_GSM_TPDU_25);
-		_(SMS_GSM_ROUTE_INFO);
-		_(SMS_GSM_PARAMETERS);
+		_(SMS_SB_TPDU);
+		_(SMS_SB_ROUTE_INFO);
+		_(SMS_SB_SMS_PARAMETERS);
 		_(SMS_COMMON_DATA);
 		_(SMS_ADDRESS);
+		/* _(SMS_SB_ADDRESS); */
 	}
 	return "SMS_<UNKNOWN>";
 }
@@ -572,16 +578,69 @@ const char *sim_message_id_name(enum sim_message_id value)
 		_(SIM_IMSI_RESP_READ_IMSI);
 		_(SIM_SERV_PROV_NAME_REQ);
 		_(SIM_SERV_PROV_NAME_RESP);
+		_(SIM_DYNAMIC_FLAGS_REQ);
+		_(SIM_DYNAMIC_FLAGS_RESP);
 		_(SIM_READ_FIELD_REQ);
 		_(SIM_READ_FIELD_RESP);
 		_(SIM_SMS_REQ);
 		_(SIM_SMS_RESP);
+		_(SIM_STATUS_REQ);
+		_(SIM_STATUS_RESP);
 		_(SIM_PB_REQ_SIM_PB_READ);
 		_(SIM_PB_RESP_SIM_PB_READ);
+		_(SIM_SERVER_READY_IND);
 		_(SIM_IND);
-		_(SIM_COMMON_MESSAGE);
 	}
+
 	return "SIM_<UNKNOWN>";
+}
+
+const char *sim_password_name(enum ofono_sim_password_type type)
+{
+	static const char *const passwd_name[] = {
+		[OFONO_SIM_PASSWORD_NONE] = "none",
+		[OFONO_SIM_PASSWORD_SIM_PIN] = "pin",
+		[OFONO_SIM_PASSWORD_SIM_PUK] = "puk",
+		[OFONO_SIM_PASSWORD_PHSIM_PIN] = "phone",
+		[OFONO_SIM_PASSWORD_PHFSIM_PIN] = "firstphone",
+		[OFONO_SIM_PASSWORD_PHFSIM_PUK] = "firstphonepuk",
+		[OFONO_SIM_PASSWORD_SIM_PIN2] = "pin2",
+		[OFONO_SIM_PASSWORD_SIM_PUK2] = "puk2",
+		[OFONO_SIM_PASSWORD_PHNET_PIN] = "network",
+		[OFONO_SIM_PASSWORD_PHNET_PUK] = "networkpuk",
+		[OFONO_SIM_PASSWORD_PHNETSUB_PIN] = "netsub",
+		[OFONO_SIM_PASSWORD_PHNETSUB_PUK] = "netsubpuk",
+		[OFONO_SIM_PASSWORD_PHSP_PIN] = "service",
+		[OFONO_SIM_PASSWORD_PHSP_PUK] = "servicepuk",
+		[OFONO_SIM_PASSWORD_PHCORP_PIN] = "corp",
+		[OFONO_SIM_PASSWORD_PHCORP_PUK] = "corppuk",
+		[OFONO_SIM_PASSWORD_INVALID] = "invalid",
+	};
+
+	if (OFONO_SIM_PASSWORD_NONE <= (int)type &&
+			type <= OFONO_SIM_PASSWORD_PHCORP_PUK)
+		return passwd_name[type];
+	else
+		return "UNKNOWN";
+}
+
+const char *sec_message_id_name(enum sec_message_id value)
+{
+	switch (value) {
+		_(SEC_CODE_STATE_REQ);
+		_(SEC_CODE_STATE_OK_RESP);
+		_(SEC_CODE_STATE_FAIL_RESP);
+		_(SEC_CODE_CHANGE_REQ);
+		_(SEC_CODE_CHANGE_OK_RESP);
+		_(SEC_CODE_CHANGE_FAIL_RESP);
+		_(SEC_CODE_VERIFY_REQ);
+		_(SEC_CODE_VERIFY_OK_RESP);
+		_(SEC_CODE_VERIFY_FAIL_RESP);
+		_(SEC_STATE_REQ);
+		_(SEC_STATE_RESP);
+	}
+
+	return "SEC_<UNKNOWN>";
 }
 
 const char *sim_subblock_name(enum sim_subblock value)
@@ -617,7 +676,6 @@ const char *info_message_id_name(enum info_message_id value)
 		_(INFO_VERSION_READ_RESP);
 		_(INFO_PRODUCT_INFO_READ_REQ);
 		_(INFO_PRODUCT_INFO_READ_RESP);
-		_(INFO_COMMON_MESSAGE);
 	}
 	return "INFO_<UNKNOWN>";
 }
@@ -744,7 +802,6 @@ char const *call_message_id_name(enum call_message_id value)
 		_(CALL_SECURITY_IND);
 		_(CALL_MEDIA_HANDLE_REQ);
 		_(CALL_MEDIA_HANDLE_RESP);
-		_(CALL_COMMON_MESSAGE);
 	}
 	return "CALL_<UNKNOWN>";
 }
@@ -978,7 +1035,8 @@ const char *net_message_id_name(enum net_message_id value)
 		_(NET_AVAILABLE_GET_RESP);
 		_(NET_OPER_NAME_READ_REQ);
 		_(NET_OPER_NAME_READ_RESP);
-		_(NET_COMMON_MESSAGE);
+		_(NET_OLD_OPER_NAME_READ_REQ);
+		_(NET_OLD_OPER_NAME_READ_RESP);
 	}
 	return "NET_<UNKNOWN>";
 }
@@ -1120,7 +1178,6 @@ const char *gpds_subblock_name(enum gpds_subblock value)
 		_(GPDS_SDNS_ADDRESS_INFO);
 		_(GPDS_CHALLENGE_INFO);
 		_(GPDS_DNS_ADDRESS_REQ_INFO);
-		_(GPDS_COMMON_MESSAGE);
 	}
 	return "GPDS_<UNKNOWN>";
 }
@@ -1263,15 +1320,24 @@ static void hex_dump(const char *resname, uint8_t res, const char *name,
 
 static const char *res_to_name(uint8_t res, uint8_t id)
 {
+	if (id == COMMON_MESSAGE)
+		return "COMMON_MESSAGE";
+
 	switch (res) {
+	case PN_MODEM_NETWORK:
 	case PN_NETWORK:
 		return net_message_id_name(id);
 	case PN_PHONE_INFO:
+	case PN_MODEM_INFO:
+	case PN_EPOC_INFO:
 		return info_message_id_name(id);
 	case PN_SS:
 		return ss_message_id_name(id);
+	case PN_MODEM_CALL:
 	case PN_CALL:
 		return call_message_id_name(id);
+	case PN_SECURITY:
+		return sec_message_id_name(id);
 	case PN_SMS:
 		return sms_message_id_name(id);
 	case PN_SIM:

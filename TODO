@@ -31,15 +31,6 @@ SMS
   Priority: Low
   Complexity: C8
 
-- See / Cancel pending SMS messages over DBus.  When oFono sends SMS messages
-  the method call is only returned when the message has been submitted to the
-  network.  Instead we should return an object path and allow cancellation of
-  pending messages.
-
-  Priority: High
-  Complexity: C2
-  Owner: Yang Gu <yang.gu@intel.com>
-
 - Asynchronously acknowledge SMS DELIVER messages sent by the SMS driver
   to core using ofono_sms_deliver_notify().  This may require the struct
   ofono_sms_driver to be extended with one more function pointer like:
@@ -79,26 +70,11 @@ SIM / SIM File system
 
   Priority: High
   Complexity: C2
-  Owner: Pekka Pessi <pekka.pessi@nokia.com>
-
-- Add support for CPHS Customer Service Profile (CSP).  This task adds support
-  for reading the EFcsp file and in particular, interpreting the PLMN mode bit
-  within the 'Value Added Services' service group.
-
-  Based on the PLMN mode value, manual network selection needs to either be
-  enabled or disabled in the netreg atom.  Also to accommodate this, there
-  probably needs to be a new 'forced' mode to indicate that manual network
-  selection is disabled.
-
-  Priority: Medium
-  Complexity: C1
-  Owner: Aki Niemi <aki.niemi@nokia.com>
 
 - Support SIM authentication: SIM and AKA suites.
 
   Priority: Medium
   Complexity: C4
-  Owner: Pekka Pessi <pekka.pessi@nokia.com>
 
 - Support SIM authentication: GBA_U suite.
 
@@ -142,13 +118,14 @@ Modem Emulator
 
   Priority: Low
   Complexity: C1
+  Owner: Frédéric Dalleau <frederic.dalleau@linux.intel.com>
 
 - Support DUN emulator. Implement the Bluetooth DUN profile with only mandatory
   AT command support. Implement USB DUN as well.
 
   Complexity: C4
   Priority: Medium
-  Owner: Gustavo F Padovan <padovan@profusion.mobi>
+  Owner: Guillaume Zajac <guillaume.zajac@linux.intel.com>
 
   Depends: PPP Server mode
 
@@ -158,38 +135,8 @@ Modem Emulator
   Priority: Medium
 
 
-Flight Mode
-===========
-
-- Flight Mode support.  Add an 'Online' property to the Modem interface that
-  will control the online state of the modem.  When Online state is True all
-  atoms are available.  When Online state is False, all network related items
-  are removed (e.g. CallSettings) or enter into reduced functionality set
-  where only the SIM is available (e.g. DataConnectionManager, SimManager, etc)
-
-  Complexity: C4
-  Priority: High
-  Owner: Pekka Pessi <pekka.pessi@nokia.com>
-
-
-GPRS
-====
-
-- Add support for IPv6 GPRS contexts.
-
-  Priority: Medium
-  Complexity: C2
-  Owner: Mika Liljeberg <mika.liljeberg@nokia.com>
-
-
 PPP
 ===
-
-- PPP Server support.  Extend GAtPPP to support PPP Server role, similarly to
-  how existing GSM modems support PPP GPRS contexts.
-
-  Priority: High
-  Complexity: C2
 
 - IPv6 CP support.  To support IPv6 based GPRS contexts via PPP, GAtPPP
   needs to be updated to support IPv6CP from RFC 2472.
@@ -206,6 +153,9 @@ PPP
 - PFC support.  Extend GAtPPP to support packets with Protocol field
   compression enabled.  Refer to RFC 1661 for details.
 
+  Priority: Medium
+  Complexity: C1
+
 
 Location Services
 =================
@@ -218,7 +168,6 @@ Location Services
 
   Complexity: C4
   Priority: Medium
-  Owner: Antti Paila <antti.paila@nokia.com>
 
 
 Supplementary Services
@@ -258,35 +207,25 @@ Supplementary Services
   conditional call forwarding should become quiescent while unconditional call
   forwarding is activate. If call forwarding unconditional is subsequently
   deactivated, all the quiescent forwardings should become operative again.
-  I.e. No conditional call forwardin string should be returned while
+  I.e. No conditional call forwarding string should be returned while
   unconditional call forwarding is active even if they exist.
 
   If there is an successful attempt to activate/deactivate conditional call
   forwarding while unconditional call forwarding is active the conditional cache
   flag should cleared.
 
-  Priority: Low
+  Priority: High
   Complexity: C1
 
 
 Voicecall
 =========
 
-- Supplementary service notifications on remote party actions:
-  - call has been put on hold (+CSSU: 2)
-  - call has been retrieved (+CSSU: 3), and
-  - joining call to a multiparty conference (+CSSU: 4)
-
-  Priority: Medium
-  Complexity: C1
-  Owner: Pekka Pessi <pekka.pessi@nokia.com>
-
 - Dial strings. Include CLIR prefixes and 2nd stage dial strings in the
   DialString call property. Add dialstring accessor method to C API.
 
   Priority: Medium
   Complexity: C4
-  Owner: Lucas De Marchi <lucas.demarchi@profusion.mobi>
 
 - Provide feedback of sent DTMF tones. Emit SendingTones signal if modem can
   provide approximate starting and stopping times for DTMF tones. Signal
@@ -295,7 +234,6 @@ Voicecall
 
   Priority: Medium
   Complexity: C2
-  Owner: Pekka Pessi <pekka.pessi@nokia.com>
 
 - Blacklisting. According to 3GPP TS 22.001 annex E, the TE must provide
   automatic calling repeat call attempt restrictions.
@@ -308,41 +246,6 @@ Voicecall
 
 Sim Toolkit
 ===========
-
-- Support Refresh proactive command.  The specification defines 7 types
-  of Refresh types:
-	- NAA Initialization
-	- NAA File Change Notification
-	- NAA Initialization and File Change Notification
-	- NAA Initialization and Full File Change Notification
-	- UICC Reset
-	- NAA Application Reset (2G only)
-	- NAA Session Reset (3G only)
-
-  The 'NAA Initialization' type will be ignored by oFono, it is assumed
-  this is handled by the modem.
-
-  For 'UICC Reset', 'NAA Application Reset' and 'NAA Session Reset' oFono
-  will first check whether there are any calls or ussd operations active.
-  If there are, the appropriate response will be sent (e.g. busy on call
-  or screen busy terminal response.)  Otherwise a positive response will be
-  sent to the driver.  In the case of a 'UICC Reset' the driver / modem
-  can interpret this that it is safe to reset the UICC.
-
-  Alternatively, the driver / modem can notify the core of the SIM removal
-  / SIM insertion events without using the Refresh proactive command.  It
-  is up to the driver / modem to perform a warm reset.  In particular, 3GPP
-  31.111 mandates that any change to EFimsi is done by using 'UICC Reset',
-  'NAA Application Reset' or 'NAA Session Reset'.  Please see 3GPP 31.111
-  Section 6.4.7.1.
-
-  Other types will be handled by oFono flushing the EF cache of the files
-  affected (or the entire SIM cache in case of Full File Change Notifications)
-  and re-reading the affected files.  Any properties derived from these
-  Elementary Files will be updated and signaled using PropertyChanged.
-
-  Priority: High
-  Complexity: C8
 
 - Support of the BIP (Bearer Independent Protocol) proactive commands.
   The specification defines several bearer types. For now, only the packet data
@@ -375,49 +278,6 @@ Sim Toolkit
   Complexity: C2
   Owner: Philippe Nunes <philippe.nunes@linux.intel.com>
 
-Emergency Calls
-===============
-
-- Modem Emergency mode.  Support network registration and online/offline
-  mode during the emergency calls and related network activity (e.g.,
-  network-initiated location request via supplementary service channel).
-
-  Proposed solution is to introduce a new Emergency boolean property to the
-  Modem D-Bus interface and new functions to modem interface:
-
-  - ofono_modem_emergency_mode_inc()
-  - ofono_modem_emergency_mode_dec()
-  - ofono_modem_emergency_mode_get()
-  - ofono_modem_add_emergency_mode_watch()
-  - ofono_modem_remove_emergency_mode_watch()
-
-  When emergency mode is requested, modem is set to online (if needed) and
-  the watchers are notified. There can be multiple parties requesting
-  emergency mode.  When all of them have completed the emergency-related
-  operation and called ofono_modem_emergency_mode_dec(), modem is set to
-  offline (if needed) and the watchers are again notified.
-
-  Priority: High
-  Complexity: C2
-
-- Country / Operator specific emergency numbers.  Figure out how to support
-  countries / operators with specific mandated emergency numbers which are
-  not part of the standard emergency number list. This needs to be queried
-  by the voicecall atom every time a new SIM is inserted.  The list is
-  assumed to be managed by the modem.  If no such functionality is available,
-  then the 3GPP mandated behavior is used.
-
-  Priority: High
-  Complexity: C2
-
-- Network updating the emergency number list. Support the list of emergency
-  numbers dynamically updated by the network.
-
-  Priority: High
-  Complexity: C2
-  Owner: Petteri Tikander <petteri.tikander@ixonos.com>
-
-
 Miscellaneous
 =============
 
@@ -442,7 +302,6 @@ Miscellaneous
 
   Priority: Medium
   Complexity: C8
-  Owner: Jukka Saunamäki <jukka.saunamaki@nokia.com>
 
 - Add Location Service API for providing basic E911 support.
   This will be based on the 27.007 defined AT commands using
@@ -450,15 +309,7 @@ Miscellaneous
 
   Priority: Medium
   Complexity: C2
-  Owner: Jarko Poutiainen <jarko.poutiainen@tieto.com>
 
-- Add support for main.conf.  This task will add support for general
-  as well as per-atom configuration options that are read and parsed
-  at startup from a configuration file under /etc/ofono.
-
-  Priority: Medium
-  Complexity: C1
-  Owner: Aki Niemi <aki.niemi@nokia.com>
 
 CDMA Voicecall
 ==============
@@ -469,7 +320,6 @@ CDMA Voicecall
 
   Priority: High
   Complexity: C2
-  Owner: Dara Spieker-Doyle <dara.spieker-doyle@nokia.com>
 
 - Add support for Three-Way Calling over a CDMA network. Three-Way Calling
   provides the subscriber with the capability to add a third party to an
@@ -625,7 +475,6 @@ CDMA Network Acquisition
 
   Priority: Medium
   Complexity: C1
-  Owner: Dara Spieker-Doyle <dara.spieker-doyle@nokia.com>
 
 - Support reporting of the received signal strength indicator (RSSI)
   measurement and of the signal to interference-plus-noise ratio (SINR)

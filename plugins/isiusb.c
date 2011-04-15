@@ -207,7 +207,7 @@ static void reachable_cb(const GIsiMessage *msg, void *data)
 	if (!g_isi_msg_error(msg) < 0)
 		return;
 
-	ISI_VERSION_DBG(msg);
+	ISI_RESOURCE_DBG(msg);
 
 	g_isi_client_ind_subscribe(isi->client, MTC_STATE_INFO_IND,
 					mtc_state_ind_cb, om);
@@ -405,7 +405,6 @@ static void isiusb_pre_sim(struct ofono_modem *modem)
 	ofono_sim_create(modem, 0, "isimodem", isi->modem);
 	ofono_devinfo_create(modem, 0, "isimodem", isi->modem);
 	ofono_voicecall_create(modem, 0, "isimodem", isi->modem);
-	ofono_voicecall_create(modem, 0, "wgmodem2.5", isi->modem);
 }
 
 static void isiusb_post_sim(struct ofono_modem *modem)
@@ -427,7 +426,6 @@ static void isiusb_post_online(struct ofono_modem *modem)
 	DBG("(%p) with %s", modem, isi->ifname);
 
 	ofono_netreg_create(modem, 0, "isimodem", isi->modem);
-	ofono_netreg_create(modem, 0, "wgmodem2.5", isi->modem);
 	ofono_sms_create(modem, 0, "isimodem", isi->modem);
 	ofono_cbs_create(modem, 0, "isimodem", isi->modem);
 	ofono_ussd_create(modem, 0, "isimodem", isi->modem);

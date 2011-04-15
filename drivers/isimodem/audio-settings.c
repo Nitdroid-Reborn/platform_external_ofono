@@ -67,10 +67,12 @@ static void isi_call_verify_cb(const GIsiMessage *msg, void *data)
 	struct ofono_audio_settings *as = data;
 	struct audio_settings_data *asd = ofono_audio_settings_get_data(as);
 
-	if (g_isi_msg_error(msg) < 0)
+	if (g_isi_msg_error(msg) < 0) {
+		ofono_audio_settings_remove(as);
 		return;
+	}
 
-	ISI_VERSION_DBG(msg);
+	ISI_RESOURCE_DBG(msg);
 
 	g_isi_client_ind_subscribe(asd->client, CALL_SERVER_STATUS_IND,
 					isi_call_server_status_ind_cb,

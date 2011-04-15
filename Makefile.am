@@ -15,7 +15,9 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
 			include/ctm.h include/cdma-voicecall.h \
 			include/cdma-sms.h include/sim-auth.h \
 			include/gprs-provision.h include/emulator.h \
-			include/location-reporting.h
+			include/location-reporting.h \
+			include/cdma-connman.h \
+			include/gnss.h
 
 nodist_pkginclude_HEADERS = include/version.h
 
@@ -185,7 +187,8 @@ builtin_sources += $(gatchat_sources) \
 				drivers/atmodem/atutil.c \
 				drivers/atmodem/gprs.c \
 				drivers/atmodem/gprs-context.c \
-				drivers/atmodem/sim-auth.c
+				drivers/atmodem/sim-auth.c \
+				drivers/atmodem/gnss.c
 
 builtin_modules += nwmodem
 builtin_sources += drivers/atmodem/atutil.h \
@@ -269,7 +272,8 @@ builtin_modules += cdmamodem
 builtin_sources += drivers/cdmamodem/cdmamodem.h \
 			drivers/cdmamodem/cdmamodem.c \
 			drivers/cdmamodem/voicecall.c \
-			drivers/cdmamodem/devinfo.c
+			drivers/cdmamodem/devinfo.c \
+			drivers/cdmamodem/connman.c
 endif
 
 builtin_modules += g1
@@ -388,7 +392,9 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
 			src/smsagent.c src/smsagent.h src/ctm.c \
 			src/cdma-voicecall.c src/sim-auth.c \
 			src/message.h src/message.c src/gprs-provision.c \
-			src/emulator.c src/location-reporting.c
+			src/emulator.c src/location-reporting.c \
+			src/cdma-connman.c src/gnss.c \
+			src/gnssagent.c src/gnssagent.h
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -508,7 +514,11 @@ test_scripts = test/backtrace \
 		test/disable-call-forwarding \
 		test/list-messages \
 		test/test-sms \
-		test/test-message-waiting
+		test/test-message-waiting \
+		test/cdma-connman-disable \
+		test/cdma-connman-enable \
+		test/set-context-property \
+		test/test-gnss
 
 if TEST
 testdir = $(pkglibdir)/test

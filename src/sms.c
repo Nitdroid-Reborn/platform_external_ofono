@@ -1001,6 +1001,83 @@ static DBusMessage *sms_send_message(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+/*
+ * Pre-process a SMS text message and deliver it [D-Bus SendMessage()]
+ *
+ * @conn: D-Bus connection
+ * @msg: message data (PDU)
+ * @data: SMS object to use for transmision
+ *
+ * An alphabet is chosen for the text and it (might be) segmented in
+ * fragments by sms_text_prepare() into @msg_list. A queue list @entry
+ * is created by tx_queue_entry_new() and g_queue_push_tail()
+ * appends that entry to the SMS transmit queue. Then the tx_next()
+ * function is scheduled to run to process the queue.
+ */
+static DBusMessage *sms_send_pdu(DBusConnection *conn, DBusMessage *msg,
+					void *data)
+{
+    struct ofono_sms *sms = data;
+    const char *pdu;
+    unsigned char *decoded_pdu;
+    long pdu_len;
+    GSList *msg_list;
+    struct ofono_modem *modem;
+    unsigned int flags;
+    gboolean use_16bit_ref = FALSE;
+    int err;
+    struct ofono_uuid uuid;
+    struct sms sms_;
+    gboolean ret;
+
+
+    if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &pdu,
+                               DBUS_TYPE_INVALID))
+        return __ofono_error_invalid_args(msg);
+
+    decoded_pdu = decode_hex(pdu, -1, &pdu_len, 0);
+    //DBG("decoded_pdu:%s, pdu_len: %d", decoded_pdu, pdu_len);
+    ret = decode_submit(decoded_pdu, pdu_len, &sms_);
+    g_free(decoded_pdu);
+
+    if (!ret)
+        return __ofono_error_invalid_args(msg);
+
+    GSList *list = g_slist_append(list, &sms_);
+    char *txt = sms_decode_text(list);
+    DBG("txt: %s, addr: %s", txt, sms_.submit.daddr.address);
+
+    msg_list = sms_text_prepare_with_alphabet(sms_.submit.daddr.address,
+                                              txt, sms->ref,
+                                              use_16bit_ref,
+                                              sms->use_delivery_reports,
+                                              sms->alphabet);
+
+    if (msg_list == NULL)
+        return __ofono_error_invalid_format(msg);
+
+    flags = OFONO_SMS_SUBMIT_FLAG_RECORD_HISTORY;
+    flags |= OFONO_SMS_SUBMIT_FLAG_RETRY;
+    flags |= OFONO_SMS_SUBMIT_FLAG_EXPOSE_DBUS;
+    if (sms->use_delivery_reports)
+        flags |= OFONO_SMS_SUBMIT_FLAG_REQUEST_SR;
+
+    err = __ofono_sms_txq_submit(sms, msg_list, flags, &uuid,
+                                 message_queued, msg);
+
+    g_slist_foreach(msg_list, (GFunc) g_free, NULL);
+    g_slist_free(msg_list);
+
+    if (err < 0)
+        return __ofono_error_failed(msg);
+
+    modem = __ofono_atom_get_modem(sms->atom);
+    __ofono_history_sms_send_pending(modem, &uuid, sms_.submit.daddr.address,
+                                     time(NULL), sms_.submit.ud);
+
+    return NULL;
+}
+
 static DBusMessage *sms_get_messages(DBusConnection *conn, DBusMessage *msg,
 					void *data)
 {
@@ -1113,6 +1190,8 @@ static GDBusMethodTable sms_manager_methods[] = {
 	{ "SetProperty",      "sv",  "",             sms_set_property,
 						G_DBUS_METHOD_FLAG_ASYNC },
 	{ "SendMessage",      "ss",  "o",             sms_send_message,
+						G_DBUS_METHOD_FLAG_ASYNC },
+	{ "SendPdu",          "s",   "o",            sms_send_pdu,
 						G_DBUS_METHOD_FLAG_ASYNC },
 	{ "GetMessages",       "",    "a(oa{sv})",    sms_get_messages },
 	{ }

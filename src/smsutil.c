@@ -1325,7 +1325,7 @@ gboolean sms_decode_unpacked_stk_pdu(const unsigned char *pdu, int len,
 	return TRUE;
 }
 
-static gboolean decode_submit(const unsigned char *pdu, int len,
+gboolean decode_submit(const unsigned char *pdu, int len,
 					struct sms *out)
 {
 	unsigned char octet;

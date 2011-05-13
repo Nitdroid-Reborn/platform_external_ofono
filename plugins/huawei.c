@@ -217,7 +217,8 @@ static gboolean notify_sim_state(struct ofono_modem *modem,
 		 */
 		ofono_modem_set_powered(modem, TRUE);
 
-		g_at_chat_send(data->pcui, "AT+CFUN=5", none_prefix,
+		if (ofono_modem_get_online(modem) == FALSE)
+			g_at_chat_send(data->pcui, "AT+CFUN=5", none_prefix,
 				cfun_offline, modem, NULL);
 
 		return FALSE;
@@ -681,8 +682,9 @@ static void huawei_post_online(struct ofono_modem *modem)
 	ofono_ussd_create(modem, OFONO_VENDOR_QUALCOMM_MSM,
 						"atmodem", data->pcui);
 
-	if (data->sim_state == HUAWEI_SIM_STATE_VALID ||
-			data->sim_state == HUAWEI_SIM_STATE_INVALID_CS) {
+	if ((data->sim_state == HUAWEI_SIM_STATE_VALID ||
+			data->sim_state == HUAWEI_SIM_STATE_INVALID_CS) &&
+			data->modem != NULL) {
 		data->gprs = ofono_gprs_create(modem, OFONO_VENDOR_HUAWEI,
 						"atmodem", data->pcui);
 

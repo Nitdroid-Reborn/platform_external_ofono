@@ -1029,6 +1029,7 @@ static DBusMessage *sms_send_pdu(DBusConnection *conn, DBusMessage *msg,
     struct ofono_uuid uuid;
     struct sms sms_;
     gboolean ret;
+    char addr[32];
 
 
     if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &pdu,
@@ -1045,9 +1046,19 @@ static DBusMessage *sms_send_pdu(DBusConnection *conn, DBusMessage *msg,
 
     GSList *list = g_slist_append(list, &sms_);
     char *txt = sms_decode_text(list);
-    DBG("txt: %s, addr: %s", txt, sms_.submit.daddr.address);
 
-    msg_list = sms_text_prepare_with_alphabet(sms_.submit.daddr.address,
+    // add + prefix to international numbers explicitly
+    if (sms_.submit.daddr.number_type == SMS_NUMBER_TYPE_INTERNATIONAL)
+        snprintf(addr, sizeof(addr),  "+%s", sms_.submit.daddr.address);
+    else
+        snprintf(addr, sizeof(addr),  "%s", sms_.submit.daddr.address);
+
+    DBG("txt: %s, addr: %s, num_type: %d, num_plan: %d",
+        txt, addr,
+        sms_.submit.daddr.number_type,
+        sms_.submit.daddr.numbering_plan);
+
+    msg_list = sms_text_prepare_with_alphabet(addr,
                                               txt, sms->ref,
                                               use_16bit_ref,
                                               sms->use_delivery_reports,

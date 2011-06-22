@@ -31,9 +31,11 @@
 #include <unistd.h>
 #include <glib.h>
 #include <gdbus.h>
-#include <ofono.h>
 
+#define OFONO_API_SUBJECT_TO_CHANGE
 #include <ofono/dbus.h>
+#include <ofono/plugin.h>
+#include <ofono/log.h>
 
 #include <btio.h>
 #include "bluetooth.h"
@@ -878,7 +880,7 @@ struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
 					ConnectFunc cb, gpointer user_data)
 {
 	struct server *server;
-	GError *err;
+	GError *err = NULL;
 
 	server = g_try_new0(struct server, 1);
 	if (!server)

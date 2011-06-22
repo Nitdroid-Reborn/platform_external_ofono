@@ -128,6 +128,7 @@ static int stk_respond(struct ofono_stk *stk, struct stk_response *rsp,
 	stk_command_free(stk->pending_cmd);
 	stk->pending_cmd = NULL;
 	stk->cancel_cmd = NULL;
+	stk->respond_on_exit = FALSE;
 
 	stk->driver->terminal_response(stk, tlv_len, tlv, cb, stk);
 
@@ -473,14 +474,34 @@ static void emit_menu_changed(struct ofono_stk *stk)
 	g_dbus_send_message(conn, signal);
 }
 
+static void cancel_pending_dtmf(struct ofono_stk *stk)
+{
+	struct ofono_voicecall *vc = NULL;
+	struct ofono_atom *vc_atom;
+
+	vc_atom = __ofono_modem_find_atom(__ofono_atom_get_modem(stk->atom),
+						OFONO_ATOM_TYPE_VOICECALL);
+	if (vc_atom)
+		vc = __ofono_atom_get_data(vc_atom);
+
+	if (vc) /* Should be always true here */
+		__ofono_voicecall_tone_cancel(vc, stk->dtmf_id);
+}
+
 static void user_termination_cb(enum stk_agent_result result, void *user_data)
 {
 	struct ofono_stk *stk = user_data;
 
-	if (result == STK_AGENT_RESULT_TERMINATE) {
-		stk->respond_on_exit = FALSE;
-		send_simple_response(stk, STK_RESULT_TYPE_USER_TERMINATED);
+	if (result != STK_AGENT_RESULT_TERMINATE)
+		return;
+
+	switch (stk->pending_cmd->type) {
+	case STK_COMMAND_TYPE_SEND_DTMF:
+		cancel_pending_dtmf(stk);
+		break;
 	}
+
+	send_simple_response(stk, STK_RESULT_TYPE_USER_TERMINATED);
 }
 
 static void stk_alpha_id_set(struct ofono_stk *stk,
@@ -598,7 +619,6 @@ static void default_agent_notify(gpointer user_data)
 
 	stk->default_agent = NULL;
 	stk->current_agent = stk->session_agent;
-	stk->respond_on_exit = FALSE;
 }
 
 static void session_agent_notify(gpointer user_data)
@@ -617,7 +637,6 @@ static void session_agent_notify(gpointer user_data)
 
 	stk->session_agent = NULL;
 	stk->current_agent = stk->default_agent;
-	stk->respond_on_exit = FALSE;
 
 	if (stk->remove_agent_source) {
 		g_source_remove(stk->remove_agent_source);
@@ -1159,8 +1178,6 @@ static void request_selection_cb(enum stk_agent_result result, uint8_t id,
 {
 	struct ofono_stk *stk = user_data;
 
-	stk->respond_on_exit = FALSE;
-
 	switch (result) {
 	case STK_AGENT_RESULT_OK:
 	{
@@ -1242,8 +1259,6 @@ static void display_text_cb(enum stk_agent_result result, void *user_data)
 	struct stk_response rsp;
 	static unsigned char screen_busy_result[] = { 0x01 };
 	static struct ofono_error error = { .type = OFONO_ERROR_TYPE_FAILURE };
-
-	stk->respond_on_exit = FALSE;
 
 	/*
 	 * There are four possible paths for DisplayText with immediate
@@ -1386,8 +1401,6 @@ static void request_confirmation_cb(enum stk_agent_result result,
 	struct stk_command_get_inkey *cmd = &stk->pending_cmd->get_inkey;
 	struct stk_response rsp;
 
-	stk->respond_on_exit = FALSE;
-
 	switch (result) {
 	case STK_AGENT_RESULT_OK:
 		memset(&rsp, 0, sizeof(rsp));
@@ -1441,8 +1454,6 @@ static void request_key_cb(enum stk_agent_result result, char *string,
 	static struct ofono_error error = { .type = OFONO_ERROR_TYPE_FAILURE };
 	struct stk_command_get_inkey *cmd = &stk->pending_cmd->get_inkey;
 	struct stk_response rsp;
-
-	stk->respond_on_exit = FALSE;
 
 	switch (result) {
 	case STK_AGENT_RESULT_OK:
@@ -1559,8 +1570,6 @@ static void request_string_cb(enum stk_agent_result result, char *string,
 	uint8_t qualifier = stk->pending_cmd->qualifier;
 	gboolean packed = (qualifier & (1 << 3)) != 0;
 	struct stk_response rsp;
-
-	stk->respond_on_exit = FALSE;
 
 	switch (result) {
 	case STK_AGENT_RESULT_OK:
@@ -1698,8 +1707,6 @@ static void confirm_call_cb(enum stk_agent_result result, gboolean confirm,
 	struct ofono_atom *vc_atom;
 	struct stk_response rsp;
 	int err;
-
-	stk->respond_on_exit = FALSE;
 
 	switch (result) {
 	case STK_AGENT_RESULT_TIMEOUT:
@@ -2280,27 +2287,13 @@ static gboolean handle_command_provide_local_info(const struct stk_command *cmd,
 
 static void send_dtmf_cancel(struct ofono_stk *stk)
 {
-	struct ofono_voicecall *vc = NULL;
-	struct ofono_atom *vc_atom;
-
-	stk->respond_on_exit = FALSE;
-
-	vc_atom = __ofono_modem_find_atom(__ofono_atom_get_modem(stk->atom),
-						OFONO_ATOM_TYPE_VOICECALL);
-	if (vc_atom)
-		vc = __ofono_atom_get_data(vc_atom);
-
-	if (vc) /* Should be always true here */
-		__ofono_voicecall_tone_cancel(vc, stk->dtmf_id);
-
+	cancel_pending_dtmf(stk);
 	stk_alpha_id_unset(stk);
 }
 
 static void dtmf_sent_cb(int error, void *user_data)
 {
 	struct ofono_stk *stk = user_data;
-
-	stk->respond_on_exit = FALSE;
 
 	stk_alpha_id_unset(stk);
 
@@ -2412,8 +2405,6 @@ static gboolean handle_command_send_dtmf(const struct stk_command *cmd,
 static void play_tone_cb(enum stk_agent_result result, void *user_data)
 {
 	struct ofono_stk *stk = user_data;
-
-	stk->respond_on_exit = FALSE;
 
 	switch (result) {
 	case STK_AGENT_RESULT_OK:
@@ -2546,8 +2537,6 @@ static void confirm_launch_browser_cb(enum stk_agent_result result,
 	unsigned char no_cause[] = { 0x00 };
 	struct ofono_error failure = { .type = OFONO_ERROR_TYPE_FAILURE };
 	struct stk_response rsp;
-
-	stk->respond_on_exit = FALSE;
 
 	switch (result) {
 	case STK_AGENT_RESULT_TIMEOUT:

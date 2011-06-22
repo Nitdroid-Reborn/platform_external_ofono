@@ -16,8 +16,8 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
 			include/cdma-sms.h include/sim-auth.h \
 			include/gprs-provision.h include/emulator.h \
 			include/location-reporting.h \
-			include/cdma-connman.h \
-			include/gnss.h
+			include/cdma-connman.h include/gnss.h \
+			include/private-network.h
 
 nodist_pkginclude_HEADERS = include/version.h
 
@@ -364,6 +364,9 @@ builtin_sources += examples/provision.c
 
 builtin_modules += example_emulator
 builtin_sources += examples/emulator.c
+
+builtin_modules += example_private_network
+builtin_sources += examples/private-network.c
 endif
 
 builtin_modules += smart_messaging
@@ -394,7 +397,9 @@ src_ofonod_SOURCES = $(gdbus_sources) $(builtin_sources) src/ofono.ver \
 			src/message.h src/message.c src/gprs-provision.c \
 			src/emulator.c src/location-reporting.c \
 			src/cdma-connman.c src/gnss.c \
-			src/gnssagent.c src/gnssagent.h
+			src/gnssagent.c src/gnssagent.h \
+			src/cdma-smsutil.h src/cdma-smsutil.c \
+			src/cdma-sms.c src/private-network.c
 
 src_ofonod_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@ -ldl
 
@@ -503,6 +508,7 @@ test_scripts = test/backtrace \
 		test/test-push-notification \
 		test/test-smart-messaging \
 		test/send-vcard \
+		test/send-vcal \
 		test/set-tty \
 		test/set-gsm-band \
 		test/set-umts-band \
@@ -518,7 +524,8 @@ test_scripts = test/backtrace \
 		test/cdma-connman-disable \
 		test/cdma-connman-enable \
 		test/set-context-property \
-		test/test-gnss
+		test/test-gnss \
+		test/swap-calls
 
 if TEST
 testdir = $(pkglibdir)/test
@@ -533,7 +540,7 @@ dist_man_MANS = doc/ofonod.8
 noinst_PROGRAMS = unit/test-common unit/test-util unit/test-idmap \
 					unit/test-sms unit/test-simutil \
 					unit/test-mux unit/test-caif \
-					unit/test-stkutil
+					unit/test-stkutil unit/test-cdmasms
 
 unit_objects =
 
@@ -552,6 +559,10 @@ unit_objects += $(unit_test_idmap_OBJECTS)
 unit_test_sms_SOURCES = unit/test-sms.c src/util.c src/smsutil.c src/storage.c
 unit_test_sms_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_sms_OBJECTS)
+
+unit_test_cdmasms_SOURCES = unit/test-cdmasms.c src/cdma-smsutil.c
+unit_test_cdmasms_LDADD = @GLIB_LIBS@
+unit_objects += $(unit_test_cdmasms_OBJECTS)
 
 unit_test_simutil_SOURCES = unit/test-simutil.c src/util.c \
 				src/simutil.c src/smsutil.c src/storage.c
@@ -575,7 +586,8 @@ unit_test_caif_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_caif_OBJECTS)
 
 if TOOLS
-noinst_PROGRAMS += tools/huawei-audio tools/auto-enable tools/get-location
+noinst_PROGRAMS += tools/huawei-audio tools/auto-enable \
+			tools/get-location tools/lookup-apn
 
 tools_huawei_audio_SOURCES = $(gdbus_sources) tools/huawei-audio.c
 tools_huawei_audio_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
@@ -585,6 +597,9 @@ tools_auto_enable_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 
 tools_get_location_SOURCES = tools/get-location.c
 tools_get_location_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
+
+tools_lookup_apn_SOURCES = tools/lookup-apn.c
+tools_lookup_apn_LDADD = @GLIB_LIBS@
 endif
 
 noinst_PROGRAMS += gatchat/gsmdial gatchat/test-server gatchat/test-qcdm

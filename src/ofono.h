@@ -134,6 +134,7 @@ enum ofono_atom_type {
 	OFONO_ATOM_TYPE_EMULATOR_HFP,
 	OFONO_ATOM_TYPE_LOCATION_REPORTING,
 	OFONO_ATOM_TYPE_GNSS,
+	OFONO_ATOM_TYPE_CDMA_SMS,
 };
 
 enum ofono_atom_watch_condition {
@@ -468,3 +469,9 @@ void __ofono_gprs_provision_free_settings(
 
 #include <ofono/emulator.h>
 #include <ofono/gnss.h>
+#include <ofono/cdma-sms.h>
+#include <ofono/private-network.h>
+
+void __ofono_private_network_release(int id);
+ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
+						int *id, void *data);

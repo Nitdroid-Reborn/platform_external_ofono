@@ -40,6 +40,10 @@
 
 #include "btio.h"
 
+#ifndef BT_FLUSHABLE
+#define BT_FLUSHABLE	8
+#endif
+
 #define ERROR_FAILED(gerr, str, err) \
 		g_set_error(gerr, BT_IO_ERROR, BT_IO_ERROR_FAILED, \
 				str ": %s (%d)", strerror(err), err)
@@ -59,6 +63,7 @@ struct set_opts {
 	uint16_t omtu;
 	int master;
 	uint8_t mode;
+	int flushable;
 };
 
 struct connect {
@@ -485,8 +490,20 @@ static gboolean get_sec_level(int sock, BtIOType type, int *level,
 	return TRUE;
 }
 
-static gboolean l2cap_set(int sock, int sec_level, uint16_t imtu, uint16_t omtu,
-					uint8_t mode, int master, GError **err)
+static int l2cap_set_flushable(int sock, gboolean flushable)
+{
+	int f;
+
+	f = flushable;
+	if (setsockopt(sock, SOL_BLUETOOTH, BT_FLUSHABLE, &f, sizeof(f)) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static gboolean l2cap_set(int sock, int sec_level, uint16_t imtu,
+				uint16_t omtu, uint8_t mode, int master,
+				int flushable, GError **err)
 {
 	if (imtu || omtu || mode) {
 		struct l2cap_options l2o;
@@ -516,6 +533,11 @@ static gboolean l2cap_set(int sock, int sec_level, uint16_t imtu, uint16_t omtu,
 
 	if (master >= 0 && l2cap_set_master(sock, master) < 0) {
 		ERROR_FAILED(err, "l2cap_set_master", errno);
+		return FALSE;
+	}
+
+	if (flushable >= 0 && l2cap_set_flushable(sock, flushable) < 0) {
+		ERROR_FAILED(err, "l2cap_set_flushable", errno);
 		return FALSE;
 	}
 
@@ -643,6 +665,7 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 	opts->master = -1;
 	opts->sec_level = BT_IO_SEC_MEDIUM;
 	opts->mode = L2CAP_MODE_BASIC;
+	opts->flushable = -1;
 
 	while (opt != BT_IO_OPT_INVALID) {
 		switch (opt) {
@@ -698,6 +721,9 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 		case BT_IO_OPT_MODE:
 			opts->mode = va_arg(args, int);
 			break;
+		case BT_IO_OPT_FLUSHABLE:
+			opts->flushable = va_arg(args, gboolean);
+			break;
 		default:
 			g_set_error(err, BT_IO_ERROR, BT_IO_ERROR_INVALID_ARGS,
 					"Unknown option %d", opt);
@@ -750,6 +776,24 @@ static int l2cap_get_info(int sock, uint16_t *handle, uint8_t *dev_class)
 	return 0;
 }
 
+static int l2cap_get_flushable(int sock, gboolean *flushable)
+{
+	int f;
+	socklen_t len;
+
+	f = 0;
+	len = sizeof(f);
+	if (getsockopt(sock, SOL_BLUETOOTH, BT_FLUSHABLE, &f, &len) < 0)
+		return -errno;
+
+	if (f)
+		*flushable = TRUE;
+	else
+		*flushable = FALSE;
+
+	return 0;
+}
+
 static gboolean l2cap_get(int sock, GError **err, BtIOOption opt1,
 								va_list args)
 {
@@ -760,6 +804,7 @@ static gboolean l2cap_get(int sock, GError **err, BtIOOption opt1,
 	uint8_t dev_class[3];
 	uint16_t handle;
 	socklen_t len;
+	gboolean flushable = FALSE;
 
 	len = sizeof(l2o);
 	memset(&l2o, 0, len);
@@ -841,6 +886,13 @@ static gboolean l2cap_get(int sock, GError **err, BtIOOption opt1,
 			break;
 		case BT_IO_OPT_MODE:
 			*(va_arg(args, uint8_t *)) = l2o.mode;
+			break;
+		case BT_IO_OPT_FLUSHABLE:
+			if (l2cap_get_flushable(sock, &flushable) < 0) {
+				ERROR_FAILED(err, "get_flushable", errno);
+				return FALSE;
+			}
+			*(va_arg(args, gboolean *)) = flushable;
 			break;
 		default:
 			g_set_error(err, BT_IO_ERROR, BT_IO_ERROR_INVALID_ARGS,
@@ -1020,14 +1072,14 @@ static gboolean sco_get(int sock, GError **err, BtIOOption opt1, va_list args)
 			break;
 		case BT_IO_OPT_HANDLE:
 			if (sco_get_info(sock, &handle, dev_class) < 0) {
-				ERROR_FAILED(err, "RFCOMM_CONNINFO", errno);
+				ERROR_FAILED(err, "SCO_CONNINFO", errno);
 				return FALSE;
 			}
 			*(va_arg(args, uint16_t *)) = handle;
 			break;
 		case BT_IO_OPT_CLASS:
 			if (sco_get_info(sock, &handle, dev_class) < 0) {
-				ERROR_FAILED(err, "RFCOMM_CONNINFO", errno);
+				ERROR_FAILED(err, "SCO_CONNINFO", errno);
 				return FALSE;
 			}
 			memcpy(va_arg(args, uint8_t *), dev_class, 3);
@@ -1085,8 +1137,10 @@ gboolean bt_io_accept(GIOChannel *io, BtIOConnect connect, gpointer user_data,
 	}
 
 	if (!(pfd.revents & POLLOUT)) {
-		int ret;
-		ret = read(sock, &c, 1);
+		if (read(sock, &c, 1) < 0) {
+			ERROR_FAILED(err, "read", errno);
+			return FALSE;
+		}
 	}
 
 	accept_add(io, connect, user_data, destroy);
@@ -1115,7 +1169,7 @@ gboolean bt_io_set(GIOChannel *io, BtIOType type, GError **err,
 	case BT_IO_L2RAW:
 	case BT_IO_L2CAP:
 		return l2cap_set(sock, opts.sec_level, opts.imtu, opts.omtu,
-						opts.mode, opts.master, err);
+				opts.mode, opts.master, opts.flushable, err);
 	case BT_IO_RFCOMM:
 		return rfcomm_set(sock, opts.sec_level, opts.master, err);
 	case BT_IO_SCO:
@@ -1156,7 +1210,7 @@ static GIOChannel *create_io(BtIOType type, gboolean server,
 		if (l2cap_bind(sock, &opts->src, server ? opts->psm : 0,
 							opts->cid, err) < 0)
 			goto failed;
-		if (!l2cap_set(sock, opts->sec_level, 0, 0, 0, -1, err))
+		if (!l2cap_set(sock, opts->sec_level, 0, 0, 0, -1, -1, err))
 			goto failed;
 		break;
 	case BT_IO_L2CAP:
@@ -1169,7 +1223,7 @@ static GIOChannel *create_io(BtIOType type, gboolean server,
 							opts->cid, err) < 0)
 			goto failed;
 		if (!l2cap_set(sock, opts->sec_level, opts->imtu, opts->omtu,
-						opts->mode, opts->master, err))
+				opts->mode, opts->master, opts->flushable, err))
 			goto failed;
 		break;
 	case BT_IO_RFCOMM:

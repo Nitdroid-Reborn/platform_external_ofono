@@ -105,17 +105,11 @@ void sim_fs_free(struct sim_fs *fs)
 	if (fs->op_q) {
 		g_queue_foreach(fs->op_q, (GFunc) sim_fs_op_free, NULL);
 		g_queue_free(fs->op_q);
+		fs->op_q = NULL;
 	}
 
-	if (fs->contexts != NULL) {
-		GSList *l;
-
-		for (l = fs->contexts; l; l = l->next) {
-			struct ofono_sim_context *context = l->data;
-
-			sim_fs_context_free(context);
-		}
-	}
+	while (fs->contexts)
+		sim_fs_context_free(fs->contexts->data);
 
 	g_free(fs);
 }

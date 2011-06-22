@@ -46,12 +46,14 @@
 #define PPP_ADDR_FIELD	0xff
 #define PPP_CTRL	0x03
 
+#define GUARD_TIMEOUTS 1500
+
 enum ppp_phase {
 	PPP_PHASE_DEAD = 0,		/* Link dead */
 	PPP_PHASE_ESTABLISHMENT,	/* LCP started */
 	PPP_PHASE_AUTHENTICATION,	/* Auth started */
 	PPP_PHASE_NETWORK,		/* IPCP started */
-	PPP_PHASE_LINK_UP,		/* IPCP negotiation succeeded, link up */
+	PPP_PHASE_LINK_UP,		/* IPCP negotiation ok, link up */
 	PPP_PHASE_TERMINATION,		/* LCP Terminate phase */
 };
 
@@ -76,6 +78,11 @@ struct _GAtPPP {
 	gpointer debug_data;
 	gboolean sta_pending;
 	guint ppp_dead_source;
+	GAtSuspendFunc suspend_func;
+	gpointer suspend_data;
+	int fd;
+	guint guard_timeout_source;
+	gboolean suspended;
 };
 
 void ppp_debug(GAtPPP *ppp, const char *str)
@@ -288,7 +295,13 @@ void ppp_auth_notify(GAtPPP *ppp, gboolean success)
 void ppp_ipcp_up_notify(GAtPPP *ppp, const char *local, const char *peer,
 					const char *dns1, const char *dns2)
 {
-	ppp->net = ppp_net_new(ppp);
+	ppp->net = ppp_net_new(ppp, ppp->fd);
+
+	/*
+	 * ppp_net_new took control over the fd, whatever happens is out of
+	 * our hands now
+	 */
+	ppp->fd = -1;
 
 	if (ppp->net == NULL) {
 		ppp->disconnect_reason = G_AT_PPP_REASON_NET_FAIL;
@@ -389,14 +402,55 @@ static void io_disconnect(gpointer user_data)
 	pppcp_signal_close(ppp->lcp);
 }
 
-/* Administrative Open */
-void g_at_ppp_open(GAtPPP *ppp)
+static void ppp_proxy_suspend_net_interface(gpointer user_data)
 {
+	GAtPPP *ppp = user_data;
+
+	ppp->suspended = TRUE;
+	ppp_net_suspend_interface(ppp->net);
+
+	if (ppp->suspend_func)
+		ppp->suspend_func(ppp->suspend_data);
+}
+
+gboolean g_at_ppp_listen(GAtPPP *ppp, GAtIO *io)
+{
+	ppp->hdlc = g_at_hdlc_new_from_io(io);
+	if (ppp->hdlc == NULL)
+		return FALSE;
+
+	ppp->suspended = FALSE;
+	g_at_hdlc_set_receive(ppp->hdlc, ppp_receive, ppp);
+	g_at_hdlc_set_suspend_function(ppp->hdlc,
+					ppp_proxy_suspend_net_interface, ppp);
+	g_at_io_set_disconnect_function(io, io_disconnect, ppp);
+
 	ppp_enter_phase(ppp, PPP_PHASE_ESTABLISHMENT);
+
+	return TRUE;
+}
+
+/* Administrative Open */
+gboolean g_at_ppp_open(GAtPPP *ppp, GAtIO *io)
+{
+	ppp->hdlc = g_at_hdlc_new_from_io(io);
+	if (ppp->hdlc == NULL)
+		return FALSE;
+
+	ppp->suspended = FALSE;
+	g_at_hdlc_set_receive(ppp->hdlc, ppp_receive, ppp);
+	g_at_hdlc_set_suspend_function(ppp->hdlc,
+					ppp_proxy_suspend_net_interface, ppp);
+	g_at_hdlc_set_no_carrier_detect(ppp->hdlc, TRUE);
+	g_at_io_set_disconnect_function(io, io_disconnect, ppp);
 
 	/* send an UP & OPEN events to the lcp layer */
 	pppcp_signal_up(ppp->lcp);
 	pppcp_signal_open(ppp->lcp);
+
+	ppp_enter_phase(ppp, PPP_PHASE_ESTABLISHMENT);
+
+	return TRUE;
 }
 
 gboolean g_at_ppp_set_credentials(GAtPPP *ppp, const char *username,
@@ -467,6 +521,20 @@ void g_at_ppp_set_debug(GAtPPP *ppp, GAtDebugFunc func, gpointer user_data)
 	ppp->debug_data = user_data;
 }
 
+void g_at_ppp_set_suspend_function(GAtPPP *ppp, GAtSuspendFunc func,
+					gpointer user_data)
+{
+	if (ppp == NULL)
+		return;
+
+	ppp->suspend_func = func;
+	ppp->suspend_data = user_data;
+
+	if (ppp->hdlc != NULL)
+		g_at_hdlc_set_suspend_function(ppp->hdlc,
+					ppp_proxy_suspend_net_interface, ppp);
+}
+
 void g_at_ppp_shutdown(GAtPPP *ppp)
 {
 	if (ppp->phase == PPP_PHASE_DEAD || ppp->phase == PPP_PHASE_TERMINATION)
@@ -474,6 +542,59 @@ void g_at_ppp_shutdown(GAtPPP *ppp)
 
 	ppp->disconnect_reason = G_AT_PPP_REASON_LOCAL_CLOSE;
 	pppcp_signal_close(ppp->lcp);
+}
+
+static gboolean call_suspend_cb(gpointer user_data)
+{
+	GAtPPP *ppp = user_data;
+
+	ppp->guard_timeout_source = 0;
+
+	if (ppp->suspend_func)
+		ppp->suspend_func(ppp->suspend_data);
+
+	return FALSE;
+}
+
+static gboolean send_escape_sequence(gpointer user_data)
+{
+	GAtPPP *ppp = user_data;
+	GAtIO *io = g_at_hdlc_get_io(ppp->hdlc);
+
+	g_at_io_write(io, "+++", 3);
+	ppp->guard_timeout_source  = g_timeout_add(GUARD_TIMEOUTS,
+						call_suspend_cb, ppp);
+
+	return FALSE;
+}
+
+void g_at_ppp_suspend(GAtPPP *ppp)
+{
+	if (ppp == NULL)
+		return;
+
+	ppp->suspended = TRUE;
+	ppp_net_suspend_interface(ppp->net);
+	g_at_hdlc_suspend(ppp->hdlc);
+	ppp->guard_timeout_source = g_timeout_add(GUARD_TIMEOUTS,
+						send_escape_sequence, ppp);
+}
+
+void g_at_ppp_resume(GAtPPP *ppp)
+{
+	if (ppp == NULL)
+		return;
+
+	if (g_at_hdlc_get_io(ppp->hdlc) == NULL) {
+		io_disconnect(ppp);
+		return;
+	}
+
+	ppp->suspended = FALSE;
+	g_at_io_set_disconnect_function(g_at_hdlc_get_io(ppp->hdlc),
+							io_disconnect, ppp);
+	ppp_net_resume_interface(ppp->net);
+	g_at_hdlc_resume(ppp->hdlc);
 }
 
 void g_at_ppp_ref(GAtPPP *ppp)
@@ -493,11 +614,14 @@ void g_at_ppp_unref(GAtPPP *ppp)
 	if (is_zero == FALSE)
 		return;
 
-	g_at_io_set_disconnect_function(g_at_hdlc_get_io(ppp->hdlc),
-						NULL, NULL);
+	if (ppp->suspended == FALSE)
+		g_at_io_set_disconnect_function(g_at_hdlc_get_io(ppp->hdlc),
+							NULL, NULL);
 
 	if (ppp->net)
 		ppp_net_free(ppp->net);
+	else if (ppp->fd >= 0)
+		close(ppp->fd);
 
 	if (ppp->chap)
 		ppp_chap_free(ppp->chap);
@@ -508,6 +632,11 @@ void g_at_ppp_unref(GAtPPP *ppp)
 	if (ppp->ppp_dead_source) {
 		g_source_remove(ppp->ppp_dead_source);
 		ppp->ppp_dead_source = 0;
+	}
+
+	if (ppp->guard_timeout_source) {
+		g_source_remove(ppp->guard_timeout_source);
+		ppp->guard_timeout_source = 0;
 	}
 
 	g_at_hdlc_unref(ppp->hdlc);
@@ -529,7 +658,7 @@ void g_at_ppp_set_server_info(GAtPPP *ppp, const char *remote,
 	ipcp_set_server_info(ppp->ipcp, r, d1, d2);
 }
 
-static GAtPPP *ppp_init_common(GAtHDLC *hdlc, gboolean is_server, guint32 ip)
+static GAtPPP *ppp_init_common(gboolean is_server, guint32 ip)
 {
 	GAtPPP *ppp;
 
@@ -537,9 +666,9 @@ static GAtPPP *ppp_init_common(GAtHDLC *hdlc, gboolean is_server, guint32 ip)
 	if (ppp == NULL)
 		return NULL;
 
-	ppp->hdlc = g_at_hdlc_ref(hdlc);
-
 	ppp->ref_count = 1;
+	ppp->suspended = TRUE;
+	ppp->fd = -1;
 
 	/* set options to defaults */
 	ppp->mru = DEFAULT_MRU;
@@ -551,50 +680,16 @@ static GAtPPP *ppp_init_common(GAtHDLC *hdlc, gboolean is_server, guint32 ip)
 	/* initialize IPCP state */
 	ppp->ipcp = ipcp_new(ppp, is_server, ip);
 
-	g_at_hdlc_set_no_carrier_detect(ppp->hdlc, TRUE);
-	g_at_hdlc_set_receive(ppp->hdlc, ppp_receive, ppp);
-	g_at_io_set_disconnect_function(g_at_hdlc_get_io(ppp->hdlc),
-						io_disconnect, ppp);
-
-	if (is_server)
-		ppp_enter_phase(ppp, PPP_PHASE_ESTABLISHMENT);
-
 	return ppp;
 }
 
-GAtPPP *g_at_ppp_new(GIOChannel *modem)
+GAtPPP *g_at_ppp_new(void)
 {
-	GAtHDLC *hdlc;
-	GAtPPP *ppp;
-
-	hdlc = g_at_hdlc_new(modem);
-	if (hdlc == NULL)
-		return NULL;
-
-	ppp = ppp_init_common(hdlc, FALSE, 0);
-	g_at_hdlc_unref(hdlc);
-
-	return ppp;
+	return ppp_init_common(FALSE, 0);
 }
 
-GAtPPP *g_at_ppp_new_from_io(GAtIO *io)
+GAtPPP *g_at_ppp_server_new_full(const char *local, int fd)
 {
-	GAtHDLC *hdlc;
-	GAtPPP *ppp;
-
-	hdlc = g_at_hdlc_new_from_io(io);
-	if (hdlc == NULL)
-		return NULL;
-
-	ppp = ppp_init_common(hdlc, FALSE, 0);
-	g_at_hdlc_unref(hdlc);
-
-	return ppp;
-}
-
-GAtPPP *g_at_ppp_server_new(GIOChannel *modem, const char *local)
-{
-	GAtHDLC *hdlc;
 	GAtPPP *ppp;
 	guint32 ip;
 
@@ -603,33 +698,15 @@ GAtPPP *g_at_ppp_server_new(GIOChannel *modem, const char *local)
 	else if (inet_pton(AF_INET, local, &ip) != 1)
 		return NULL;
 
-	hdlc = g_at_hdlc_new(modem);
-	if (hdlc == NULL)
-		return NULL;
+	ppp = ppp_init_common(TRUE, ip);
 
-	ppp = ppp_init_common(hdlc, TRUE, ip);
-	g_at_hdlc_unref(hdlc);
+	if (ppp != NULL)
+		ppp->fd = fd;
 
 	return ppp;
 }
 
-GAtPPP *g_at_ppp_server_new_from_io(GAtIO *io, const char *local)
+GAtPPP *g_at_ppp_server_new(const char *local)
 {
-	GAtHDLC *hdlc;
-	GAtPPP *ppp;
-	guint32 ip;
-
-	if (local == NULL)
-		ip = 0;
-	else if (inet_pton(AF_INET, local, &ip) != 1)
-		return NULL;
-
-	hdlc = g_at_hdlc_new_from_io(io);
-	if (hdlc == NULL)
-		return NULL;
-
-	ppp = ppp_init_common(hdlc, TRUE, ip);
-	g_at_hdlc_unref(hdlc);
-
-	return ppp;
+	return g_at_ppp_server_new_full(local, -1);
 }

@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <glib.h>
 
@@ -33,11 +34,6 @@
 #include "gatserver.h"
 #include "gatppp.h"
 
-#define DUN_SERVER_ADDRESS     "192.168.1.1"
-#define DUN_PEER_ADDRESS       "192.168.1.2"
-#define DUN_DNS_SERVER_1       "10.10.10.10"
-#define DUN_DNS_SERVER_2       "10.10.10.11"
-
 #define RING_TIMEOUT 3
 
 struct ofono_emulator {
@@ -45,16 +41,17 @@ struct ofono_emulator {
 	enum ofono_emulator_type type;
 	GAtServer *server;
 	GAtPPP *ppp;
-	guint source;
 	gboolean slc;
 	int l_features;
 	int r_features;
 	int events_mode;
 	gboolean events_ind;
+	unsigned char cmee_mode;
 	GSList *indicators;
 	guint callsetup_source;
 	gboolean clip;
 	gboolean ccwa;
+	int pns_id;
 };
 
 struct indicator {
@@ -90,50 +87,85 @@ static void ppp_connect(const char *iface, const char *local,
 	DBG("Secondary DNS Server: %s\n", dns2);
 }
 
-static void ppp_disconnect(GAtPPPDisconnectReason reason, gpointer user_data)
+static void cleanup_ppp(struct ofono_emulator *em)
 {
-	struct ofono_emulator *em = user_data;
-
 	DBG("");
 
 	g_at_ppp_unref(em->ppp);
 	em->ppp = NULL;
 
+	__ofono_private_network_release(em->pns_id);
+	em->pns_id = 0;
+
 	if (em->server == NULL)
 		return;
 
 	g_at_server_resume(em->server);
+	g_at_server_send_final(em->server, G_AT_SERVER_RESULT_NO_CARRIER);
 }
 
-static gboolean setup_ppp(gpointer user_data)
+static void ppp_disconnect(GAtPPPDisconnectReason reason, gpointer user_data)
 {
 	struct ofono_emulator *em = user_data;
-	GAtIO *io;
+
+	cleanup_ppp(em);
+}
+
+static void ppp_suspend(gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
 
 	DBG("");
 
-	em->source = 0;
+	g_at_server_resume(em->server);
+}
 
-	io = g_at_server_get_io(em->server);
+static void suspend_server(gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
+	GAtIO *io = g_at_server_get_io(em->server);
 
 	g_at_server_suspend(em->server);
 
-	em->ppp = g_at_ppp_server_new_from_io(io, DUN_SERVER_ADDRESS);
+	if (g_at_ppp_listen(em->ppp, io) == FALSE)
+		cleanup_ppp(em);
+}
+
+static void request_private_network_cb(
+			const struct ofono_private_network_settings *pns,
+			void *data)
+{
+	struct ofono_emulator *em = data;
+	GAtIO *io = g_at_server_get_io(em->server);
+
+	if (pns == NULL)
+		goto error;
+
+	em->ppp = g_at_ppp_server_new_full(pns->server_ip, pns->fd);
 	if (em->ppp == NULL) {
-		g_at_server_resume(em->server);
-		return FALSE;
+		close(pns->fd);
+		goto error;
 	}
 
-	g_at_ppp_set_server_info(em->ppp, DUN_PEER_ADDRESS,
-					DUN_DNS_SERVER_1, DUN_DNS_SERVER_2);
+	g_at_ppp_set_server_info(em->ppp, pns->peer_ip,
+					pns->primary_dns, pns->secondary_dns);
 
 	g_at_ppp_set_credentials(em->ppp, "", "");
 	g_at_ppp_set_debug(em->ppp, emulator_debug, "PPP");
 
 	g_at_ppp_set_connect_function(em->ppp, ppp_connect, em);
 	g_at_ppp_set_disconnect_function(em->ppp, ppp_disconnect, em);
+	g_at_ppp_set_suspend_function(em->ppp, ppp_suspend, em);
 
-	return FALSE;
+	g_at_server_send_intermediate(em->server, "CONNECT");
+	g_at_io_set_write_done(io, suspend_server, em);
+
+	return;
+
+error:
+	__ofono_private_network_release(em->pns_id);
+	em->pns_id = 0;
+	g_at_server_send_final(em->server, G_AT_SERVER_RESULT_ERROR);
 }
 
 static gboolean dial_call(struct ofono_emulator *em, const char *dial_str)
@@ -143,8 +175,9 @@ static gboolean dial_call(struct ofono_emulator *em, const char *dial_str)
 	DBG("dial call %s", dial_str);
 
 	if (c == '*' || c == '#' || c == 'T' || c == 't') {
-		g_at_server_send_intermediate(em->server, "CONNECT");
-		em->source = g_idle_add(setup_ppp, em);
+		if (__ofono_private_network_request(request_private_network_cb,
+						&em->pns_id, em) == FALSE)
+			return FALSE;
 	}
 
 	return TRUE;
@@ -181,6 +214,93 @@ static void dial_cb(GAtServer *server, GAtServerRequestType type,
 
 error:
 	g_at_server_send_final(em->server, G_AT_SERVER_RESULT_ERROR);
+}
+
+static void dun_ath_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
+	GAtResultIter iter;
+	int val;
+
+	DBG("");
+
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_SET:
+		g_at_result_iter_init(&iter, result);
+		g_at_result_iter_next(&iter, "");
+
+		if (g_at_result_iter_next_number(&iter, &val) == FALSE)
+			goto error;
+
+		if (val != 0)
+			goto error;
+
+		/* Fall through */
+
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		if (em->ppp == NULL)
+			goto error;
+
+		g_at_ppp_unref(em->ppp);
+		em->ppp = NULL;
+
+		__ofono_private_network_release(em->pns_id);
+		em->pns_id = 0;
+
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+error:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
+}
+
+static void resume_ppp(gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
+
+	g_at_server_suspend(em->server);
+	g_at_ppp_resume(em->ppp);
+}
+
+static void dun_ato_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
+	GAtIO *io = g_at_server_get_io(em->server);
+	GAtResultIter iter;
+	int val;
+
+	DBG("");
+
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_SET:
+		g_at_result_iter_init(&iter, result);
+		g_at_result_iter_next(&iter, "");
+
+		if (g_at_result_iter_next_number(&iter, &val) == FALSE)
+			goto error;
+
+		if (val != 0)
+			goto error;
+
+		/* Fall through */
+	case G_AT_SERVER_REQUEST_TYPE_COMMAND_ONLY:
+		if (em->ppp == NULL)
+			goto error;
+
+		g_at_server_send_intermediate(em->server, "CONNECT");
+		g_at_io_set_write_done(io, resume_ppp, em);
+		break;
+
+	default:
+error:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
 }
 
 static struct indicator *find_indicator(struct ofono_emulator *em,
@@ -577,6 +697,50 @@ fail:
 	};
 }
 
+static void cmee_cb(GAtServer *server, GAtServerRequestType type,
+			GAtResult *result, gpointer user_data)
+{
+	struct ofono_emulator *em = user_data;
+	GAtResultIter iter;
+	int val;
+	char buf[16];
+
+	switch (type) {
+	case G_AT_SERVER_REQUEST_TYPE_SET:
+		g_at_result_iter_init(&iter, result);
+		g_at_result_iter_next(&iter, "");
+
+		if (g_at_result_iter_next_number(&iter, &val) == FALSE)
+			goto fail;
+
+		if (val < 0 && val > 1)
+			goto fail;
+
+		em->cmee_mode = val;
+
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	case G_AT_SERVER_REQUEST_TYPE_QUERY:
+		sprintf(buf, "+CMEE: %d", em->cmee_mode);
+		g_at_server_send_info(em->server, buf, TRUE);
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	case G_AT_SERVER_REQUEST_TYPE_SUPPORT:
+		/* HFP only support 0 and 1 */
+		sprintf(buf, "+CMEE: (0,1)");
+		g_at_server_send_info(em->server, buf, TRUE);
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_OK);
+		break;
+
+	default:
+fail:
+		g_at_server_send_final(server, G_AT_SERVER_RESULT_ERROR);
+		break;
+	}
+}
+
 static void emulator_add_indicator(struct ofono_emulator *em, const char* name,
 					int min, int max, int dflt)
 {
@@ -603,11 +767,6 @@ static void emulator_unregister(struct ofono_atom *atom)
 
 	DBG("%p", em);
 
-	if (em->source) {
-		g_source_remove(em->source);
-		em->source = 0;
-	}
-
 	if (em->callsetup_source) {
 		g_source_remove(em->callsetup_source);
 		em->callsetup_source = 0;
@@ -622,6 +781,14 @@ static void emulator_unregister(struct ofono_atom *atom)
 
 	g_slist_free(em->indicators);
 	em->indicators = NULL;
+
+	g_at_ppp_unref(em->ppp);
+	em->ppp = NULL;
+
+	if (em->pns_id > 0) {
+		__ofono_private_network_release(em->pns_id);
+		em->pns_id = 0;
+	}
 
 	g_at_server_unref(em->server);
 	em->server = NULL;
@@ -664,14 +831,23 @@ void ofono_emulator_register(struct ofono_emulator *em, int fd)
 		g_at_server_register(em->server, "+CMER", cmer_cb, em, NULL);
 		g_at_server_register(em->server, "+CLIP", clip_cb, em, NULL);
 		g_at_server_register(em->server, "+CCWA", ccwa_cb, em, NULL);
+		g_at_server_register(em->server, "+CMEE", cmee_cb, em, NULL);
 	}
 
 	__ofono_atom_register(em->atom, emulator_unregister);
 
-	if (em->type == OFONO_EMULATOR_TYPE_DUN)
+	switch (em->type) {
+	case OFONO_EMULATOR_TYPE_DUN:
 		g_at_server_register(em->server, "D", dial_cb, em, NULL);
-	else if (em->type == OFONO_EMULATOR_TYPE_HFP)
+		g_at_server_register(em->server, "H", dun_ath_cb, em, NULL);
+		g_at_server_register(em->server, "O", dun_ato_cb, em, NULL);
+		break;
+	case OFONO_EMULATOR_TYPE_HFP:
 		g_at_server_set_echo(em->server, FALSE);
+		break;
+	default:
+		break;
+	}
 }
 
 static void emulator_remove(struct ofono_atom *atom)
@@ -707,6 +883,7 @@ struct ofono_emulator *ofono_emulator_create(struct ofono_modem *modem,
 	/* TODO: Check real local features */
 	em->l_features = 32;
 	em->events_mode = 3;	/* default mode is forwarding events */
+	em->cmee_mode = 0;	/* CME ERROR disabled by default */
 
 	em->atom = __ofono_modem_add_atom_offline(modem, atom_t,
 							emulator_remove, em);
@@ -735,7 +912,20 @@ void ofono_emulator_send_final(struct ofono_emulator *em,
 		break;
 
 	case OFONO_ERROR_TYPE_CME:
-		sprintf(buf, "+CME ERROR: %d", final->error);
+		switch (em->cmee_mode) {
+		case 1:
+			sprintf(buf, "+CME ERROR: %d", final->error);
+			break;
+
+		case 2:
+			sprintf(buf, "+CME ERROR: %s",
+						telephony_error_to_str(final));
+			break;
+
+		default:
+			goto failure;
+		}
+
 		g_at_server_send_ext_final(em->server, buf);
 		break;
 
@@ -746,6 +936,7 @@ void ofono_emulator_send_final(struct ofono_emulator *em,
 	case OFONO_ERROR_TYPE_CEER:
 	case OFONO_ERROR_TYPE_SIM:
 	case OFONO_ERROR_TYPE_FAILURE:
+failure:
 		g_at_server_send_final(em->server, G_AT_SERVER_RESULT_ERROR);
 		break;
 	};

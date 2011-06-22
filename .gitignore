@@ -38,10 +38,12 @@ unit/test-simutil
 unit/test-mux
 unit/test-caif
 unit/test-stkutil
+unit/test-cdmasms
 
 tools/huawei-audio
 tools/auto-enable
 tools/get-location
+tools/lookup-apn
 
 gatchat/gsmdial
 gatchat/test-server

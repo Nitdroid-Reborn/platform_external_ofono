@@ -276,13 +276,10 @@ static void gprs_cid_release(struct ofono_gprs *gprs, unsigned int id)
 static gboolean assign_context(struct pri_context *ctx)
 {
 	struct idmap *cidmap = ctx->gprs->cid_map;
-	unsigned int cid_min;
 	GSList *l;
 
 	if (cidmap == NULL)
 		return FALSE;
-
-	cid_min = idmap_get_min(cidmap);
 
 	ctx->context.cid = gprs_cid_alloc(ctx->gprs);
 	if (ctx->context.cid == 0)
@@ -1362,6 +1359,16 @@ static gboolean context_dbus_unregister(struct pri_context *ctx)
 	DBusConnection *conn = ofono_dbus_get_connection();
 	char path[256];
 
+	if (ctx->active == TRUE) {
+		const char *interface =
+			ctx->context_driver->settings->interface;
+
+		if (ctx->type == OFONO_GPRS_CONTEXT_TYPE_MMS)
+			pri_set_ipv4_addr(interface, NULL);
+
+		pri_ifupdown(interface, FALSE);
+	}
+
 	strcpy(path, ctx->path);
 	idmap_put(ctx->gprs->pid_map, ctx->id);
 
@@ -1829,9 +1836,10 @@ static void gprs_deactivate_for_remove(const struct ofono_error *error,
 {
 	struct pri_context *ctx = data;
 	struct ofono_gprs *gprs = ctx->gprs;
-	DBusConnection *conn;
+	DBusConnection *conn = ofono_dbus_get_connection();
 	char *path;
 	const char *atompath;
+	dbus_bool_t value;
 
 	if (error->type != OFONO_ERROR_TYPE_NO_ERROR) {
 		DBG("Removing context failed with error: %s",
@@ -1844,6 +1852,11 @@ static void gprs_deactivate_for_remove(const struct ofono_error *error,
 
 	pri_reset_context_settings(ctx);
 	release_context(ctx);
+
+	value = FALSE;
+	ofono_dbus_signal_property_changed(conn, ctx->path,
+					OFONO_CONNECTION_CONTEXT_INTERFACE,
+					"Active", DBUS_TYPE_BOOLEAN, &value);
 
 	if (gprs->settings) {
 		g_key_file_remove_group(gprs->settings, ctx->key, NULL);
@@ -1860,7 +1873,6 @@ static void gprs_deactivate_for_remove(const struct ofono_error *error,
 				dbus_message_new_method_return(gprs->pending));
 
 	atompath = __ofono_atom_get_path(gprs->atom);
-	conn = ofono_dbus_get_connection();
 	g_dbus_emit_signal(conn, atompath, OFONO_CONNECTION_MANAGER_INTERFACE,
 				"ContextRemoved", DBUS_TYPE_OBJECT_PATH, &path,
 				DBUS_TYPE_INVALID);
@@ -2128,19 +2140,48 @@ void ofono_gprs_set_cid_range(struct ofono_gprs *gprs,
 static void gprs_context_unregister(struct ofono_atom *atom)
 {
 	struct ofono_gprs_context *gc = __ofono_atom_get_data(atom);
+	DBusConnection *conn = ofono_dbus_get_connection();
+	GSList *l;
+	struct pri_context *ctx;
+	dbus_bool_t value;
+
+	DBG("%p, %p", gc, gc->gprs);
 
 	if (gc->gprs == NULL)
-		return;
+		goto done;
 
-	if (gc->settings) {
-		context_settings_free(gc->settings);
-		g_free(gc->settings);
-		gc->settings = NULL;
+	for (l = gc->gprs->contexts; l; l = l->next) {
+		ctx = l->data;
+
+		if (ctx->context_driver != gc)
+			continue;
+
+		if (ctx->pending != NULL)
+			__ofono_dbus_pending_reply(&ctx->pending,
+					__ofono_error_failed(ctx->pending));
+
+		if (ctx->active == FALSE)
+			break;
+
+		pri_reset_context_settings(ctx);
+		release_context(ctx);
+
+		value = FALSE;
+		ofono_dbus_signal_property_changed(conn, ctx->path,
+					OFONO_CONNECTION_CONTEXT_INTERFACE,
+					"Active", DBUS_TYPE_BOOLEAN, &value);
 	}
 
 	gc->gprs->context_drivers = g_slist_remove(gc->gprs->context_drivers,
 							gc);
 	gc->gprs = NULL;
+
+done:
+	if (gc->settings) {
+		context_settings_free(gc->settings);
+		g_free(gc->settings);
+		gc->settings = NULL;
+	}
 }
 
 void ofono_gprs_add_context(struct ofono_gprs *gprs,
@@ -2457,6 +2498,8 @@ static void gprs_unregister(struct ofono_atom *atom)
 	struct ofono_modem *modem = __ofono_atom_get_modem(atom);
 	const char *path = __ofono_atom_get_path(atom);
 
+	DBG("%p", gprs);
+
 	free_contexts(gprs);
 
 	if (gprs->cid_map) {
@@ -2485,6 +2528,7 @@ static void gprs_unregister(struct ofono_atom *atom)
 static void gprs_remove(struct ofono_atom *atom)
 {
 	struct ofono_gprs *gprs = __ofono_atom_get_data(atom);
+	GSList *l;
 
 	DBG("atom: %p", atom);
 
@@ -2497,6 +2541,12 @@ static void gprs_remove(struct ofono_atom *atom)
 	if (gprs->pid_map) {
 		idmap_free(gprs->pid_map);
 		gprs->pid_map = NULL;
+	}
+
+	for (l = gprs->context_drivers; l; l = l->next) {
+		struct ofono_gprs_context *gc = l->data;
+
+		gc->gprs = NULL;
 	}
 
 	g_slist_free(gprs->context_drivers);

@@ -259,6 +259,7 @@ static int isi_ussd_probe(struct ofono_ussd *ussd, unsigned int vendor,
 	ofono_ussd_set_data(ussd, ud);
 
 	g_isi_client_verify(ud->client, ussd_reachable_cb, ussd, NULL);
+	g_isi_client_set_timeout(ud->client, 10);
 
 	return 0;
 }

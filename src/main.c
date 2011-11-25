@@ -28,7 +28,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
-//#include <sys/signalfd.h>
 
 #include <gdbus.h>
 
@@ -52,40 +51,6 @@ static gboolean quit_eventloop(gpointer user_data)
 	__ofono_exit();
 	return FALSE;
 }
-
-#if 0
-static gboolean signal_cb(GIOChannel *channel, GIOCondition cond, gpointer data)
-{
-	static int terminated = 0;
-	int signal_fd = GPOINTER_TO_INT(data);
-	struct signalfd_siginfo si;
-	ssize_t res;
-
-	if (cond & (G_IO_NVAL | G_IO_ERR))
-		return FALSE;
-
-	res = read(signal_fd, &si, sizeof(si));
-	if (res != sizeof(si))
-		return FALSE;
-
-	switch (si.ssi_signo) {
-	case SIGINT:
-	case SIGTERM:
-		if (terminated == 0) {
-			g_timeout_add_seconds(SHUTDOWN_GRACE_SECONDS,
-						quit_eventloop, NULL);
-			__ofono_modem_shutdown();
-		}
-
-		terminated++;
-		break;
-	default:
-		break;
-	}
-
-	return TRUE;
-}
-#endif
 
 static void system_bus_disconnected(DBusConnection *conn, void *user_data)
 {
@@ -134,9 +99,6 @@ int main(int argc, char **argv)
 	sigset_t mask;
 	DBusConnection *conn = 0;
 	DBusError error;
-	int signal_fd;
-	GIOChannel *signal_io;
-	int signal_source;
 
 #ifdef HAVE_CAPNG
 	/* Drop capabilities */
@@ -145,31 +107,6 @@ int main(int argc, char **argv)
 				CAP_NET_BIND_SERVICE, CAP_NET_ADMIN,
 				CAP_NET_RAW, CAP_SYS_ADMIN, -1);
 	capng_apply(CAPNG_SELECT_BOTH);
-#endif
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGTERM);
-	sigaddset(&mask, SIGINT);
-
-#if 0
-	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
-		perror("Can't set signal mask");
-		return 1;
-	}
-#endif
-
-#if 0
-	signal_fd = signalfd(-1, &mask, 0);
-	if (signal_fd < 0) {
-		perror("Can't create signal filedescriptor");
-		return 1;
-	}
-	signal_io = g_io_channel_unix_new(signal_fd);
-	g_io_channel_set_close_on_unref(signal_io, TRUE);
-	signal_source = g_io_add_watch(signal_io,
-			G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-			signal_cb, GINT_TO_POINTER(signal_fd));
-	g_io_channel_unref(signal_io);
 #endif
 
 #ifdef NEED_THREADS
@@ -262,7 +199,6 @@ int main(int argc, char **argv)
 	dbus_connection_unref(conn);
 
 cleanup:
-	g_source_remove(signal_source);
 	g_main_loop_unref(event_loop);
 
 	__ofono_log_cleanup();

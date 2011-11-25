@@ -301,6 +301,9 @@ builtin_sources += plugins/zte.c
 builtin_modules += huawei
 builtin_sources += plugins/huawei.c
 
+builtin_modules += huaweicdma
+builtin_sources += plugins/huaweicdma.c
+
 builtin_modules += sierra
 builtin_sources += plugins/sierra.c
 
@@ -337,6 +340,9 @@ builtin_sources += plugins/linktop.c
 builtin_modules += telit
 builtin_sources += plugins/telit.c
 
+builtin_modules += speedup
+builtin_sources += plugins/speedup.c
+
 if BLUETOOTH
 builtin_modules += bluetooth
 builtin_sources += plugins/bluetooth.c plugins/bluetooth.h
@@ -349,6 +355,9 @@ builtin_sources += plugins/hfp_ag.c plugins/bluetooth.h
 
 builtin_modules += dun_gw
 builtin_sources += plugins/dun_gw.c plugins/bluetooth.h
+
+builtin_modules += connman
+builtin_sources += plugins/connman.c
 
 builtin_sources += $(btio_sources)
 builtin_cflags += @BLUEZ_CFLAGS@
@@ -543,9 +552,12 @@ dist_man_MANS = doc/ofonod.8
 
 unit_objects =
 
-check_PROGRAMS = unit/test-common unit/test-util unit/test-idmap \
+unit_tests = unit/test-common unit/test-util unit/test-idmap \
 				unit/test-simutil unit/test-stkutil \
 				unit/test-sms unit/test-cdmasms
+
+noinst_PROGRAMS = $(unit_tests) \
+			unit/test-sms-root unit/test-mux unit/test-caif
 
 unit_test_common_SOURCES = unit/test-common.c src/common.c src/util.c
 unit_test_common_LDADD = @GLIB_LIBS@
@@ -578,8 +590,6 @@ unit_test_cdmasms_SOURCES = unit/test-cdmasms.c src/cdma-smsutil.c
 unit_test_cdmasms_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_cdmasms_OBJECTS)
 
-noinst_PROGRAMS = unit/test-sms-root unit/test-mux unit/test-caif
-
 unit_test_sms_root_SOURCES = unit/test-sms.c src/util.c src/smsutil.c src/storage.c
 unit_test_sms_root_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_sms_root_OBJECTS)
@@ -594,7 +604,7 @@ unit_test_caif_SOURCES = unit/test-caif.c $(gatchat_sources) \
 unit_test_caif_LDADD = @GLIB_LIBS@
 unit_objects += $(unit_test_caif_OBJECTS)
 
-TESTS = $(check_PROGRAMS)
+TESTS = $(unit_tests)
 
 if TOOLS
 noinst_PROGRAMS += tools/huawei-audio tools/auto-enable \

@@ -2,7 +2,7 @@
  *
  *  oFono - Open Source Telephony
  *
- *  Copyright (C) 2008-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2008-2011  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -50,20 +50,20 @@
 
 static const char *none_prefix[] = { NULL };
 
-struct zte_data {
+struct speedup_data {
 	GAtChat *modem;
 	GAtChat *aux;
 	struct ofono_gprs *gprs;
 	struct ofono_gprs_context *gc;
 };
 
-static int zte_probe(struct ofono_modem *modem)
+static int speedup_probe(struct ofono_modem *modem)
 {
-	struct zte_data *data;
+	struct speedup_data *data;
 
 	DBG("%p", modem);
 
-	data = g_try_new0(struct zte_data, 1);
+	data = g_try_new0(struct speedup_data, 1);
 	if (data == NULL)
 		return -ENOMEM;
 
@@ -72,9 +72,9 @@ static int zte_probe(struct ofono_modem *modem)
 	return 0;
 }
 
-static void zte_remove(struct ofono_modem *modem)
+static void speedup_remove(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -86,7 +86,7 @@ static void zte_remove(struct ofono_modem *modem)
 	g_free(data);
 }
 
-static void zte_debug(const char *str, void *user_data)
+static void speedup_debug(const char *str, void *user_data)
 {
         const char *prefix = user_data;
 
@@ -120,15 +120,15 @@ static GAtChat *open_device(struct ofono_modem *modem,
 		return NULL;
 
 	if (getenv("OFONO_AT_DEBUG"))
-		g_at_chat_set_debug(chat, zte_debug, debug);
+		g_at_chat_set_debug(chat, speedup_debug, debug);
 
 	return chat;
 }
 
-static void zte_disconnect(gpointer user_data)
+static void speedup_disconnect(gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("");
 
@@ -142,7 +142,7 @@ static void zte_disconnect(gpointer user_data)
 		return;
 
 	g_at_chat_set_disconnect_function(data->modem,
-						zte_disconnect, modem);
+						speedup_disconnect, modem);
 
 	ofono_info("Reopened GPRS context channel");
 
@@ -161,9 +161,9 @@ static void cfun_enable(gboolean ok, GAtResult *result, gpointer user_data)
 	ofono_modem_set_powered(modem, ok);
 }
 
-static int zte_enable(struct ofono_modem *modem)
+static int speedup_enable(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -172,7 +172,7 @@ static int zte_enable(struct ofono_modem *modem)
 		return -EINVAL;
 
 	g_at_chat_set_disconnect_function(data->modem,
-						zte_disconnect, modem);
+						speedup_disconnect, modem);
 
 	data->aux = open_device(modem, "Aux", "Aux: ");
 	if (data->aux == NULL) {
@@ -184,8 +184,7 @@ static int zte_enable(struct ofono_modem *modem)
 	g_at_chat_send(data->aux, "ATE0 +CMEE=1", none_prefix,
 						NULL, NULL, NULL);
 
-	/* Direct transition 0 -> 4 leaves SIM hosed */
-	g_at_chat_send(data->aux, "AT+CFUN=1;+CFUN=4", none_prefix,
+	g_at_chat_send(data->aux, "AT+CFUN=1", none_prefix,
 					cfun_enable, modem, NULL);
 
 	return -EINPROGRESS;
@@ -194,7 +193,7 @@ static int zte_enable(struct ofono_modem *modem)
 static void cfun_disable(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("");
 
@@ -205,9 +204,9 @@ static void cfun_disable(gboolean ok, GAtResult *result, gpointer user_data)
 		ofono_modem_set_powered(modem, FALSE);
 }
 
-static int zte_disable(struct ofono_modem *modem)
+static int speedup_disable(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -239,10 +238,10 @@ static void set_online_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	cb(&error, cbd->data);
 }
 
-static void zte_set_online(struct ofono_modem *modem, ofono_bool_t online,
+static void speedup_set_online(struct ofono_modem *modem, ofono_bool_t online,
 				ofono_modem_online_cb_t cb, void *user_data)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 	GAtChat *chat = data->aux;
 	struct cb_data *cbd = cb_data_new(cb, user_data);
 	char const *command = online ? "AT+CFUN=1" : "AT+CFUN=4";
@@ -261,9 +260,9 @@ error:
 	CALLBACK_WITH_FAILURE(cb, cbd->data);
 }
 
-static void zte_pre_sim(struct ofono_modem *modem)
+static void speedup_pre_sim(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 	struct ofono_sim *sim;
 
 	DBG("%p", modem);
@@ -276,9 +275,9 @@ static void zte_pre_sim(struct ofono_modem *modem)
 		ofono_sim_inserted_notify(sim, TRUE);
 }
 
-static void zte_post_sim(struct ofono_modem *modem)
+static void speedup_post_sim(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -295,9 +294,9 @@ static void zte_post_sim(struct ofono_modem *modem)
 		ofono_gprs_add_context(data->gprs, data->gc);
 }
 
-static void zte_post_online(struct ofono_modem *modem)
+static void speedup_post_online(struct ofono_modem *modem)
 {
-	struct zte_data *data = ofono_modem_get_data(modem);
+	struct speedup_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -309,27 +308,27 @@ static void zte_post_online(struct ofono_modem *modem)
 					"atmodem", data->aux);
 }
 
-static struct ofono_modem_driver zte_driver = {
-	.name		= "zte",
-	.probe		= zte_probe,
-	.remove		= zte_remove,
-	.enable		= zte_enable,
-	.disable	= zte_disable,
-	.set_online     = zte_set_online,
-	.pre_sim	= zte_pre_sim,
-	.post_sim	= zte_post_sim,
-	.post_online    = zte_post_online,
+static struct ofono_modem_driver speedup_driver = {
+	.name		= "speedup",
+	.probe		= speedup_probe,
+	.remove		= speedup_remove,
+	.enable		= speedup_enable,
+	.disable	= speedup_disable,
+	.set_online     = speedup_set_online,
+	.pre_sim	= speedup_pre_sim,
+	.post_sim	= speedup_post_sim,
+	.post_online    = speedup_post_online,
 };
 
-static int zte_init(void)
+static int speedup_init(void)
 {
-	return ofono_modem_driver_register(&zte_driver);
+	return ofono_modem_driver_register(&speedup_driver);
 }
 
-static void zte_exit(void)
+static void speedup_exit(void)
 {
-	ofono_modem_driver_unregister(&zte_driver);
+	ofono_modem_driver_unregister(&speedup_driver);
 }
 
-OFONO_PLUGIN_DEFINE(zte, "ZTE modem driver", VERSION,
-		OFONO_PLUGIN_PRIORITY_DEFAULT, zte_init, zte_exit)
+OFONO_PLUGIN_DEFINE(speedup, "SpeedUp modem driver", VERSION,
+		OFONO_PLUGIN_PRIORITY_DEFAULT, speedup_init, speedup_exit)

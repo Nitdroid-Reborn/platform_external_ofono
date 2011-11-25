@@ -15,11 +15,24 @@ ATTRS{idVendor}=="1199", ATTRS{idProduct}=="683c", ENV{OFONO_IFACE_NUM}=="03", E
 ATTRS{idVendor}=="1199", ATTRS{idProduct}=="6880", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SIERRA_TYPE}="modem"
 ATTRS{idVendor}=="1199", ATTRS{idProduct}=="6890", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SIERRA_TYPE}="modem"
 
+# ZTE
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0017", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_ZTE_TYPE}="modem"
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0017", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
+
 ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0031", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_ZTE_TYPE}="modem"
 ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0031", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
 
 ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0063", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_ZTE_TYPE}="modem"
 ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0063", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
+
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0117", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_ZTE_TYPE}="modem"
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0117", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
+
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0121", ENV{OFONO_IFACE_NUM}=="04", ENV{OFONO_ZTE_TYPE}="modem"
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0121", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
+
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0124", ENV{OFONO_IFACE_NUM}=="04", ENV{OFONO_ZTE_TYPE}="modem"
+ATTRS{idVendor}=="19d2", ATTRS{idProduct}=="0124", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_ZTE_TYPE}="aux"
 
 # Generic 0x1001
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1001", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_HUAWEI_TYPE}="Modem"
@@ -344,10 +357,25 @@ ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1485", ENV{OFONO_IFACE_NUM}=="02", E
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1486", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_HUAWEI_TYPE}="Modem"
 ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1486", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_HUAWEI_TYPE}="Pcui"
 
+ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1c05", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_HUAWEI_TYPE}="Modem"
+ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1c05", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_HUAWEI_TYPE}="Pcui"
+
 #Telit UC864-G
 ATTRS{idVendor}=="1bc7", ATTRS{idProduct}=="1004", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_TELIT_TYPE}="Modem"
 ATTRS{idVendor}=="1bc7", ATTRS{idProduct}=="1004", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_TELIT_TYPE}="GPS"
 ATTRS{idVendor}=="1bc7", ATTRS{idProduct}=="1004", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_TELIT_TYPE}="Data"
+
+# SpeedUp 9800
+ATTRS{idVendor}=="1c9e", ATTRS{idProduct}=="9800", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_SPEEDUP_TYPE}="modem"
+ATTRS{idVendor}=="1c9e", ATTRS{idProduct}=="9800", ENV{OFONO_IFACE_NUM}=="02", ENV{OFONO_SPEEDUP_TYPE}="aux"
+
+# SpeedUp 7300
+ATTRS{idVendor}=="1c9e", ATTRS{idProduct}=="9e00", ENV{OFONO_IFACE_NUM}=="00", ENV{OFONO_SPEEDUP_TYPE}="modem"
+ATTRS{idVendor}=="1c9e", ATTRS{idProduct}=="9e00", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SPEEDUP_TYPE}="aux"
+
+# SpeedUp 8000
+ATTRS{idVendor}=="2020", ATTRS{idProduct}=="1008", ENV{OFONO_IFACE_NUM}=="01", ENV{OFONO_SPEEDUP_TYPE}="modem"
+ATTRS{idVendor}=="2020", ATTRS{idProduct}=="1008", ENV{OFONO_IFACE_NUM}=="03", ENV{OFONO_SPEEDUP_TYPE}="aux"
 
 LABEL="ofono_tty_end"
 
@@ -388,6 +416,15 @@ ATTRS{idVendor}=="05c6", ENV{OFONO_DRIVER}="gobi"
 ATTRS{idVendor}=="19d2", ENV{OFONO_DRIVER}="zte"
 
 ATTRS{idVendor}=="19d2", ATTRS{serial}=="1234567890ABCDEF", ENV{ID_SERIAL_SHORT}=""
+
+# SpeedUp
+ATTRS{idVendor}=="1c9e", ENV{OFONO_DRIVER}="speedup"
+
+ATTRS{idVendor}=="1c9e", ATTRS{serial}=="1234567890ABCDEF", ENV{ID_SERIAL_SHORT}=""
+
+ATTRS{idVendor}=="2020", ENV{OFONO_DRIVER}="speedup"
+
+ATTRS{idVendor}=="2020", ATTRS{serial}=="1234567890ABCDEF", ENV{ID_SERIAL_SHORT}=""
 
 # Option Globetrotter
 ATTRS{idVendor}=="0af0", ATTRS{idProduct}=="6911", ENV{OFONO_DRIVER}="hso"

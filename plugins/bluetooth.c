@@ -226,9 +226,9 @@ done:
 	g_slist_free(prop_handlers);
 }
 
-static void has_uuid(DBusMessageIter *array, gpointer user_data)
+static void parse_uuids(DBusMessageIter *array, gpointer user_data)
 {
-	gboolean *profiles = user_data;
+	GSList **uuids = user_data;
 	DBusMessageIter value;
 
 	if (dbus_message_iter_get_arg_type(array) != DBUS_TYPE_ARRAY)
@@ -241,8 +241,7 @@ static void has_uuid(DBusMessageIter *array, gpointer user_data)
 
 		dbus_message_iter_get_basic(&value, &uuid);
 
-		if (!strcasecmp(uuid, HFP_AG_UUID))
-			*profiles |= HFP_AG;
+		*uuids = g_slist_prepend(*uuids, (char *) uuid);
 
 		dbus_message_iter_next(&value);
 	}
@@ -259,17 +258,38 @@ static void parse_string(DBusMessageIter *iter, gpointer user_data)
 	dbus_message_iter_get_basic(iter, str);
 }
 
+static void bluetooth_probe(GSList *uuids, const char *path,
+				const char *device, const char *adapter,
+				const char *alias)
+{
+	for (; uuids; uuids = uuids->next) {
+		struct bluetooth_profile *driver;
+		const char *uuid = uuids->data;
+		int err;
+
+		driver = g_hash_table_lookup(uuid_hash, uuid);
+		if (driver == NULL)
+			continue;
+
+		err = driver->probe(path, device, adapter, alias);
+		if (err == 0)
+			continue;
+
+		ofono_error("%s probe: %s (%d)", driver->name, strerror(-err),
+									-err);
+	}
+}
+
 static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 {
 	DBusMessage *reply;
-	int have_uuid = 0;
 	const char *path = user_data;
 	const char *adapter = NULL;
 	const char *adapter_addr = NULL;
 	const char *device_addr = NULL;
 	const char *alias = NULL;
-	struct bluetooth_profile *profile;
 	struct DBusError derr;
+	GSList *uuids = NULL;
 
 	reply = dbus_pending_call_steal_reply(call);
 
@@ -284,7 +304,7 @@ static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 
 	DBG("");
 
-	bluetooth_parse_properties(reply, "UUIDs", has_uuid, &have_uuid,
+	bluetooth_parse_properties(reply, "UUIDs", parse_uuids, &uuids,
 				"Adapter", parse_string, &adapter,
 				"Address", parse_string, &device_addr,
 				"Alias", parse_string, &alias, NULL);
@@ -293,15 +313,13 @@ static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 		adapter_addr = g_hash_table_lookup(adapter_address_hash,
 							adapter);
 
-	if ((have_uuid & HFP_AG) && device_addr && adapter_addr) {
-		profile = g_hash_table_lookup(uuid_hash, HFP_AG_UUID);
-		if (profile == NULL || profile->create == NULL)
-			goto done;
+	if (!device_addr || !adapter_addr)
+		goto done;
 
-		profile->create(path, device_addr, adapter_addr, alias);
-	}
+	bluetooth_probe(uuids, path, device_addr, adapter_addr, alias);
 
 done:
+	g_slist_free(uuids);
 	dbus_message_unref(reply);
 }
 
@@ -342,7 +360,7 @@ static gboolean property_changed(DBusConnection *connection, DBusMessage *msg,
 
 	dbus_message_iter_get_basic(&iter, &property);
 	if (g_str_equal(property, "UUIDs") == TRUE) {
-		int profiles = 0;
+		GSList *uuids = NULL;
 		const char *path = dbus_message_get_path(msg);
 		DBusMessageIter variant;
 
@@ -354,13 +372,13 @@ static gboolean property_changed(DBusConnection *connection, DBusMessage *msg,
 
 		dbus_message_iter_recurse(&iter, &variant);
 
-		has_uuid(&variant, &profiles);
+		parse_uuids(&variant, &uuids);
 
 		/* We need the full set of properties to be able to create
 		 * the modem properly, including Adapter and Alias, so
 		 * refetch everything again
 		 */
-		if (profiles)
+		if (uuids)
 			bluetooth_send_with_reply(path, BLUEZ_DEVICE_INTERFACE,
 					"GetProperties", device_properties_cb,
 					g_strdup(path), g_free, -1,
@@ -692,14 +710,38 @@ static gboolean adapter_added(DBusConnection *connection, DBusMessage *message,
 	return TRUE;
 }
 
+static void bluetooth_remove(gpointer key, gpointer value, gpointer user_data)
+{
+	struct bluetooth_profile *profile = value;
+
+	profile->remove(user_data);
+}
+
 static gboolean adapter_removed(DBusConnection *connection,
 				DBusMessage *message, void *user_data)
 {
 	const char *path;
 
 	if (dbus_message_get_args(message, NULL, DBUS_TYPE_OBJECT_PATH, &path,
-				DBUS_TYPE_INVALID) == TRUE)
-		g_hash_table_remove(adapter_address_hash, path);
+				DBUS_TYPE_INVALID) == FALSE)
+		return FALSE;
+
+	g_hash_table_foreach(uuid_hash, bluetooth_remove, (gpointer) path);
+	g_hash_table_remove(adapter_address_hash, path);
+
+	return TRUE;
+}
+
+static gboolean device_removed(DBusConnection *connection,
+				DBusMessage *message, void *user_data)
+{
+	const char *path;
+
+	if (dbus_message_get_args(message, NULL, DBUS_TYPE_OBJECT_PATH, &path,
+				DBUS_TYPE_INVALID) == FALSE)
+		return FALSE;
+
+	g_hash_table_foreach(uuid_hash, bluetooth_remove, (gpointer) path);
 
 	return TRUE;
 }
@@ -756,14 +798,6 @@ done:
 	dbus_message_unref(reply);
 }
 
-static void bluetooth_remove_all_modem(gpointer key, gpointer value,
-					gpointer user_data)
-{
-	struct bluetooth_profile *profile = value;
-
-	profile->remove_all();
-}
-
 static void bluetooth_connect(DBusConnection *connection, void *user_data)
 {
 	bluetooth_send_with_reply("/", BLUEZ_MANAGER_INTERFACE, "GetProperties",
@@ -781,7 +815,7 @@ static void bluetooth_disconnect(DBusConnection *connection, void *user_data)
 	if (uuid_hash == NULL)
 		return;
 
-	g_hash_table_foreach(uuid_hash, bluetooth_remove_all_modem, NULL);
+	g_hash_table_foreach(uuid_hash, bluetooth_remove, NULL);
 
 	g_slist_foreach(server_list, (GFunc) remove_service_handle, NULL);
 }
@@ -789,6 +823,7 @@ static void bluetooth_disconnect(DBusConnection *connection, void *user_data)
 static guint bluetooth_watch;
 static guint adapter_added_watch;
 static guint adapter_removed_watch;
+static guint device_removed_watch;
 static guint property_watch;
 
 static void bluetooth_ref(void)
@@ -811,6 +846,11 @@ static void bluetooth_ref(void)
 						BLUEZ_MANAGER_INTERFACE,
 						"AdapterRemoved",
 						adapter_removed, NULL, NULL);
+
+	device_removed_watch = g_dbus_add_signal_watch(connection, NULL, NULL,
+						BLUEZ_ADAPTER_INTERFACE,
+						"DeviceRemoved",
+						device_removed, NULL, NULL);
 
 	property_watch = g_dbus_add_signal_watch(connection, NULL, NULL,
 						BLUEZ_DEVICE_INTERFACE,

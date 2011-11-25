@@ -529,7 +529,12 @@ static void stk_alpha_id_set(struct ofono_stk *stk,
 
 static void stk_alpha_id_unset(struct ofono_stk *stk)
 {
-	stk_agent_request_cancel(stk->current_agent);
+	/*
+	 * If there is no default agent, then current agent also will be NULL.
+	 * So, call request cancel only when there is a valid current agent.
+	 */
+	if (stk->current_agent)
+		stk_agent_request_cancel(stk->current_agent);
 }
 
 static int duration_to_msecs(const struct stk_duration *duration)
@@ -2879,7 +2884,7 @@ void ofono_stk_proactive_command_handled_notify(struct ofono_stk *stk,
 		break;
 
 	case STK_COMMAND_TYPE_REFRESH:
-		handle_command_refresh(stk->pending_cmd, NULL, stk);
+		handle_command_refresh(cmd, NULL, stk);
 		break;
 	}
 

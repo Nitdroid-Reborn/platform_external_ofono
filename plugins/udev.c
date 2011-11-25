@@ -122,6 +122,7 @@ static void add_mbm(struct ofono_modem *modem,
 			g_str_has_suffix(desc, "Minicard Modem 2") ||
 			g_str_has_suffix(desc, "Mini-Card Modem") ||
 			g_str_has_suffix(desc, "Broadband Modem") ||
+			g_str_has_suffix(desc, "Module Modem") ||
 			g_str_has_suffix(desc, "Broadband USB Modem"))) {
 		devnode = udev_device_get_devnode(udev_device);
 
@@ -132,11 +133,14 @@ static void add_mbm(struct ofono_modem *modem,
 	} else if (registered == 0 &&
 			(g_str_has_suffix(desc, "Minicard Data Modem") ||
 			g_str_has_suffix(desc, "Mini-Card Data Modem") ||
+			g_str_has_suffix(desc, "Module Data Modem") ||
+			g_str_has_suffix(desc, "Module\xc2\xa0""Data Modem") ||
 			g_str_has_suffix(desc, "Broadband Data Modem"))) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, DATA_DEVICE, devnode);
 	} else if (g_str_has_suffix(desc, "Minicard GPS Port") ||
 			g_str_has_suffix(desc, "Mini-Card GPS Port") ||
+			g_str_has_suffix(desc, "Module NMEA") ||
 			g_str_has_suffix(desc, "Broadband GPS Port")) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, GPS_DEVICE, devnode);
@@ -144,6 +148,7 @@ static void add_mbm(struct ofono_modem *modem,
 			(g_str_has_suffix(desc, "Minicard Network Adapter") ||
 			g_str_has_suffix(desc, "Mini-Card Network Adapter") ||
 			g_str_has_suffix(desc, "Broadband Network Adapter") ||
+			g_str_has_suffix(desc, "Module Network Adapter") ||
 			g_str_has_suffix(desc, "Minicard NetworkAdapter"))) {
 		devnode = get_property(udev_device, "INTERFACE");
 		ofono_modem_set_string(modem, NETWORK_INTERFACE, devnode);
@@ -577,10 +582,10 @@ static void add_linktop(struct ofono_modem *modem,
 
 	if (g_strcmp0(intfnum, "01") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
-		ofono_modem_set_string(modem, "Modem", devnode);
+		ofono_modem_set_string(modem, "Aux", devnode);
 	} else if (g_strcmp0(intfnum, "03") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
-		ofono_modem_set_string(modem, "Control", devnode);
+		ofono_modem_set_string(modem, "Modem", devnode);
 
 		ofono_modem_set_integer(modem, "Registered", 1);
 		ofono_modem_register(modem);

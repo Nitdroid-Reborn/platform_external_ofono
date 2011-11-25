@@ -83,6 +83,8 @@ struct _GAtPPP {
 	int fd;
 	guint guard_timeout_source;
 	gboolean suspended;
+	gboolean xmit_acfc;
+	gboolean xmit_pfc;
 };
 
 void ppp_debug(GAtPPP *ppp, const char *str)
@@ -168,25 +170,62 @@ static inline gboolean ppp_drop_packet(GAtPPP *ppp, guint16 protocol)
 static void ppp_receive(const unsigned char *buf, gsize len, void *data)
 {
 	GAtPPP *ppp = data;
-	guint16 protocol = ppp_proto(buf);
-	const guint8 *packet = ppp_info(buf);
+	unsigned int offset = 0;
+	guint16 protocol;
+	const guint8 *packet;
+
+	if (len == 0)
+		return;
+
+	if (buf[0] == PPP_ADDR_FIELD && len >= 2 && buf[1] == PPP_CTRL)
+		offset = 2;
+
+	if (len < offset + 1)
+		return;
+
+	/* From RFC 1661:
+	 * the Protocol field uses an extension mechanism consistent with the
+	 * ISO 3309 extension mechanism for the Address field; the Least
+	 * Significant Bit (LSB) of each octet is used to indicate extension
+	 * of the Protocol field.  A binary "0" as the LSB indicates that the
+	 * Protocol field continues with the following octet.  The presence
+	 * of a binary "1" as the LSB marks the last octet of the Protocol
+	 * field.
+	 *
+	 * To check for compression we simply check the LSB of the first
+	 * protocol byte.
+	 */
+
+	if (buf[offset] & 0x1) {
+		protocol = buf[offset];
+		offset += 1;
+	} else {
+		if (len < offset + 2)
+			return;
+
+		protocol = get_host_short(buf + offset);
+		offset += 2;
+	}
 
 	if (ppp_drop_packet(ppp, protocol))
 		return;
 
+	packet = buf + offset;
+
 	switch (protocol) {
 	case PPP_IP_PROTO:
-		ppp_net_process_packet(ppp->net, packet);
+		ppp_net_process_packet(ppp->net, packet, len - offset);
 		break;
 	case LCP_PROTOCOL:
-		pppcp_process_packet(ppp->lcp, packet);
+		pppcp_process_packet(ppp->lcp, packet, len - offset);
 		break;
 	case IPCP_PROTO:
-		pppcp_process_packet(ppp->ipcp, packet);
+		pppcp_process_packet(ppp->ipcp, packet, len - offset);
 		break;
 	case CHAP_PROTOCOL:
 		if (ppp->chap) {
-			ppp_chap_process_packet(ppp->chap, packet);
+			ppp_chap_process_packet(ppp->chap, packet,
+							len - offset);
 			break;
 		}
 		/* fall through */
@@ -196,37 +235,29 @@ static void ppp_receive(const unsigned char *buf, gsize len, void *data)
 	};
 }
 
-/*
- * transmit out through the lower layer interface
- *
- * infolen - length of the information part of the packet
- */
-void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
+static void ppp_send_lcp_frame(GAtPPP *ppp, guint8 *packet, guint infolen)
 {
 	struct ppp_header *header = (struct ppp_header *) packet;
-	guint16 proto = ppp_proto(packet);
 	guint8 code;
-	gboolean lcp = (proto == LCP_PROTOCOL);
 	guint32 xmit_accm = 0;
 	gboolean sta = FALSE;
+	gboolean lcp;
 
 	/*
 	 * all LCP Link Configuration, Link Termination, and Code-Reject
 	 * packets must be sent with the default sending ACCM
 	 */
-	if (lcp) {
-		code = pppcp_get_code(packet);
-		lcp = code > 0 && code < 8;
+	code = pppcp_get_code(packet);
+	lcp = code > 0 && code < 8;
 
-		/*
-		 * If we're going down, we try to make sure to send the final
-		 * ack before informing the upper layers via the ppp_disconnect
-		 * function.  Once we enter PPP_DEAD phase, no further packets
-		 * will be sent
-		 */
-		if (code == PPPCP_CODE_TYPE_TERMINATE_ACK)
-			sta = TRUE;
-	}
+	/*
+	 * If we're going down, we try to make sure to send the final
+	 * ack before informing the upper layers via the ppp_disconnect
+	 * function.  Once we enter PPP_DEAD phase, no further packets
+	 * will be sent
+	 */
+	if (code == PPPCP_CODE_TYPE_TERMINATE_ACK)
+		sta = TRUE;
 
 	if (lcp) {
 		xmit_accm = g_at_hdlc_get_xmit_accm(ppp->hdlc);
@@ -249,6 +280,69 @@ void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
 
 	if (lcp)
 		g_at_hdlc_set_xmit_accm(ppp->hdlc, xmit_accm);
+}
+
+static void ppp_send_acfc_frame(GAtPPP *ppp, guint8 *packet,
+					guint infolen)
+{
+	struct ppp_header *header = (struct ppp_header *) packet;
+	guint offset = 0;
+
+	if (ppp->xmit_acfc)
+		offset = 2;
+
+	/* We remove the only address and control field */
+	if (g_at_hdlc_send(ppp->hdlc, packet + offset,
+				infolen + sizeof(*header) - offset)
+			== FALSE)
+		DBG(ppp, "Failed to send a frame\n");
+}
+
+static void ppp_send_acfc_pfc_frame(GAtPPP *ppp, guint8 *packet,
+					guint infolen)
+{
+	struct ppp_header *header = (struct ppp_header *) packet;
+	guint offset = 0;
+
+	if (ppp->xmit_acfc && ppp->xmit_pfc)
+		offset = 3;
+	else if (ppp->xmit_acfc)
+		offset = 2;
+	else if (ppp->xmit_pfc) {
+		/* Shuffle AC bytes in place of the first protocol byte */
+		packet[2] = packet[1];
+		packet[1] = packet[0];
+		offset = 1;
+	}
+
+	if (g_at_hdlc_send(ppp->hdlc, packet + offset,
+				infolen + sizeof(*header) - offset)
+			== FALSE)
+		DBG(ppp, "Failed to send a frame\n");
+}
+
+/*
+ * transmit out through the lower layer interface
+ *
+ * infolen - length of the information part of the packet
+ */
+void ppp_transmit(GAtPPP *ppp, guint8 *packet, guint infolen)
+{
+	guint16 proto = ppp_proto(packet);
+
+	if (proto == LCP_PROTOCOL) {
+		ppp_send_lcp_frame(ppp, packet, infolen);
+		return;
+	}
+
+	/*
+	 * If the upper 8 bits of the protocol are 0, then send
+	 * with PFC if enabled
+	 */
+	if ((proto & 0xff00) == 0)
+		ppp_send_acfc_pfc_frame(ppp, packet, infolen);
+	else
+		ppp_send_acfc_frame(ppp, packet, infolen);
 }
 
 static inline void ppp_enter_phase(GAtPPP *ppp, enum ppp_phase phase)
@@ -388,6 +482,16 @@ void ppp_set_mtu(GAtPPP *ppp, const guint8 *data)
 	guint16 mtu = get_host_short(data);
 
 	ppp->mtu = mtu;
+}
+
+void ppp_set_xmit_acfc(GAtPPP *ppp, gboolean acfc)
+{
+	ppp->xmit_acfc = acfc;
+}
+
+void ppp_set_xmit_pfc(GAtPPP *ppp, gboolean pfc)
+{
+	ppp->xmit_pfc = pfc;
 }
 
 static void io_disconnect(gpointer user_data)
@@ -656,6 +760,16 @@ void g_at_ppp_set_server_info(GAtPPP *ppp, const char *remote,
 	inet_pton(AF_INET, dns2, &d2);
 
 	ipcp_set_server_info(ppp->ipcp, r, d1, d2);
+}
+
+void g_at_ppp_set_acfc_enabled(GAtPPP *ppp, gboolean enabled)
+{
+	lcp_set_acfc_enabled(ppp->lcp, enabled);
+}
+
+void g_at_ppp_set_pfc_enabled(GAtPPP *ppp, gboolean enabled)
+{
+	lcp_set_pfc_enabled(ppp->lcp, enabled);
 }
 
 static GAtPPP *ppp_init_common(gboolean is_server, guint32 ip)

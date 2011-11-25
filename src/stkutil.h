@@ -1477,14 +1477,6 @@ struct stk_channel {
 	enum stk_channel_status status;
 };
 
-struct stk_channel_data {
-	struct stk_common_byte_array data;
-	union {
-		unsigned short rx_remaining;
-		unsigned short tx_avail;
-	};
-};
-
 struct stk_response_get_inkey {
 	struct stk_answer_text text;
 	struct stk_duration duration;
@@ -1699,7 +1691,7 @@ struct stk_envelope_event_download {
 		} browser_termination;
 		struct {
 			struct stk_channel channel;
-			unsigned int channel_data_len;
+			unsigned short channel_data_len;
 		} data_available;
 		struct {
 			struct stk_channel channel;

@@ -150,6 +150,9 @@ static void request_private_network_cb(
 	g_at_ppp_set_server_info(em->ppp, pns->peer_ip,
 					pns->primary_dns, pns->secondary_dns);
 
+	g_at_ppp_set_acfc_enabled(em->ppp, TRUE);
+	g_at_ppp_set_pfc_enabled(em->ppp, TRUE);
+
 	g_at_ppp_set_credentials(em->ppp, "", "");
 	g_at_ppp_set_debug(em->ppp, emulator_debug, "PPP");
 
@@ -433,7 +436,7 @@ static void brsf_cb(GAtServer *server, GAtServerRequestType type,
 		if (g_at_result_iter_next_number(&iter, &val) == FALSE)
 			goto fail;
 
-		if ((val < 0) && (val > 127))
+		if (val < 0 || val > 127)
 			goto fail;
 
 		em->r_features = val;
@@ -715,7 +718,7 @@ static void cmee_cb(GAtServer *server, GAtServerRequestType type,
 		if (g_at_result_iter_next_number(&iter, &val) == FALSE)
 			goto fail;
 
-		if (val < 0 && val > 1)
+		if (val != 0 && val != 1)
 			goto fail;
 
 		em->cmee_mode = val;
@@ -882,8 +885,11 @@ struct ofono_emulator *ofono_emulator_create(struct ofono_modem *modem,
 		return NULL;
 
 	em->type = type;
-	/* TODO: Check real local features */
-	em->l_features = 32;
+	em->l_features |= HFP_AG_FEATURE_3WAY;
+	em->l_features |= HFP_AG_FEATURE_REJECT_CALL;
+	em->l_features |= HFP_AG_FEATURE_ENHANCED_CALL_STATUS;
+	em->l_features |= HFP_AG_FEATURE_ENHANCED_CALL_CONTROL;
+	em->l_features |= HFP_AG_FEATURE_EXTENDED_RES_CODE;
 	em->events_mode = 3;	/* default mode is forwarding events */
 	em->cmee_mode = 0;	/* CME ERROR disabled by default */
 

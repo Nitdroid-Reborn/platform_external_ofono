@@ -4596,7 +4596,7 @@ static gboolean build_dataobj_event_type(struct stk_tlv_builder *tlv,
 						const void *data, gboolean cr)
 {
 	const struct stk_event_list list = {
-		.list = { *(uint8_t *) data },
+		.list = { *(enum stk_event_type *) data },
 		.len = 1,
 	};
 
@@ -5461,6 +5461,8 @@ static gboolean build_dataobj(struct stk_tlv_builder *tlv,
 
 		builder_func = va_arg(args, dataobj_writer);
 	}
+
+	va_end(args);
 
 	return TRUE;
 }

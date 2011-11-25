@@ -56,6 +56,7 @@ LOCAL_SRC_FILES:= \
 	drivers/isimodem/sms.c \
 	drivers/isimodem/cbs.c \
 	drivers/isimodem/sim.c \
+	drivers/isimodem/uicc.c \
 	drivers/isimodem/ussd.c \
 	drivers/isimodem/gprs.c \
 	drivers/isimodem/gprs-context.c \

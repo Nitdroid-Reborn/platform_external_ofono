@@ -1263,7 +1263,8 @@ static void current_operator_callback(const struct ofono_error *error,
 				!network_operator_dbus_register(netreg, opd)) {
 			g_free(opd);
 			return;
-		}
+		} else
+			opd->netreg = netreg;
 
 		netreg->current_operator = opd;
 		netreg->operator_list = g_slist_append(netreg->operator_list,
@@ -1482,6 +1483,12 @@ static void init_registration_status(const struct ofono_error *error,
 		if (netreg->driver->register_auto != NULL)
 			netreg->driver->register_auto(netreg, init_register,
 							netreg);
+	}
+
+	if (netreg->driver->register_manual == NULL) {
+		set_registration_mode(netreg,
+					NETWORK_REGISTRATION_MODE_AUTO_ONLY);
+		return;
 	}
 
 	if (netreg->sim_context) {
@@ -1930,6 +1937,9 @@ static void netreg_load_settings(struct ofono_netreg *netreg)
 	const char *imsi;
 	char *strmode;
 	gboolean upgrade = FALSE;
+
+	if (netreg->mode == NETWORK_REGISTRATION_MODE_AUTO_ONLY)
+		return;
 
 	imsi = ofono_sim_get_imsi(netreg->sim);
 	if (imsi == NULL)

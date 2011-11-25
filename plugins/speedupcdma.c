@@ -37,25 +37,25 @@
 #include <ofono/cdma-connman.h>
 #include <ofono/log.h>
 
-struct huaweicdma_data {
+struct speedupcdma_data {
 	GAtChat *modem;
-	GAtChat *pcui;
+	GAtChat *aux;
 };
 
-static void huaweicdma_debug(const char *str, void *data)
+static void speedupcdma_debug(const char *str, void *data)
 {
 	const char *prefix = data;
 
 	ofono_info("%s%s", prefix, str);
 }
 
-static int huaweicdma_probe(struct ofono_modem *modem)
+static int speedupcdma_probe(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data;
+	struct speedupcdma_data *data;
 
 	DBG("%p", modem);
 
-	data = g_try_new0(struct huaweicdma_data, 1);
+	data = g_try_new0(struct speedupcdma_data, 1);
 	if (data == NULL)
 		return -ENOMEM;
 
@@ -64,9 +64,9 @@ static int huaweicdma_probe(struct ofono_modem *modem)
 	return 0;
 }
 
-static void huaweicdma_remove(struct ofono_modem *modem)
+static void speedupcdma_remove(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -78,7 +78,7 @@ static void huaweicdma_remove(struct ofono_modem *modem)
 static void cfun_enable(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("");
 
@@ -86,8 +86,8 @@ static void cfun_enable(gboolean ok, GAtResult *result, gpointer user_data)
 		g_at_chat_unref(data->modem);
 		data->modem = NULL;
 
-		g_at_chat_unref(data->pcui);
-		data->pcui = NULL;
+		g_at_chat_unref(data->aux);
+		data->aux = NULL;
 	}
 
 	ofono_modem_set_powered(modem, ok);
@@ -121,14 +121,14 @@ static GAtChat *open_device(struct ofono_modem *modem,
 		return NULL;
 
 	if (getenv("OFONO_AT_DEBUG"))
-		g_at_chat_set_debug(chat, huaweicdma_debug, debug);
+		g_at_chat_set_debug(chat, speedupcdma_debug, debug);
 
 	return chat;
 }
 
-static int huaweicdma_enable(struct ofono_modem *modem)
+static int speedupcdma_enable(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("");
 
@@ -136,17 +136,17 @@ static int huaweicdma_enable(struct ofono_modem *modem)
 	if (data->modem == NULL)
 		return -EINVAL;
 
-	data->pcui = open_device(modem, "Pcui", "PCUI: ");
-	if (data->pcui == NULL) {
+	data->aux = open_device(modem, "Aux", "Aux: ");
+	if (data->aux == NULL) {
 		g_at_chat_unref(data->modem);
 		data->modem = NULL;
 		return -EIO;
 	}
 
 	g_at_chat_send(data->modem, "ATE0 &C0 +CMEE=1", NULL, NULL, NULL, NULL);
-	g_at_chat_send(data->pcui, "ATE0 &C0 +CMEE=1", NULL, NULL, NULL, NULL);
+	g_at_chat_send(data->aux, "ATE0 &C0 +CMEE=1", NULL, NULL, NULL, NULL);
 
-	g_at_chat_send(data->pcui, "AT+CFUN=1", NULL,
+	g_at_chat_send(data->aux, "AT+CFUN=1", NULL,
 					cfun_enable, modem, NULL);
 
 	return -EINPROGRESS;
@@ -155,20 +155,20 @@ static int huaweicdma_enable(struct ofono_modem *modem)
 static void cfun_disable(gboolean ok, GAtResult *result, gpointer user_data)
 {
 	struct ofono_modem *modem = user_data;
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("");
 
-	g_at_chat_unref(data->pcui);
-	data->pcui = NULL;
+	g_at_chat_unref(data->aux);
+	data->aux = NULL;
 
 	if (ok)
 		ofono_modem_set_powered(modem, FALSE);
 }
 
-static int huaweicdma_disable(struct ofono_modem *modem)
+static int speedupcdma_disable(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
@@ -178,59 +178,59 @@ static int huaweicdma_disable(struct ofono_modem *modem)
 	g_at_chat_unref(data->modem);
 	data->modem = NULL;
 
-	g_at_chat_cancel_all(data->pcui);
-	g_at_chat_unregister_all(data->pcui);
+	g_at_chat_cancel_all(data->aux);
+	g_at_chat_unregister_all(data->aux);
 
-	g_at_chat_send(data->pcui, "AT+CFUN=0", NULL,
+	g_at_chat_send(data->aux, "AT+CFUN=0", NULL,
 					cfun_disable, modem, NULL);
 
 	return -EINPROGRESS;
 }
 
-static void huaweicdma_pre_sim(struct ofono_modem *modem)
+static void speedupcdma_pre_sim(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
-	ofono_devinfo_create(modem, 0, "cdmamodem", data->pcui);
+	ofono_devinfo_create(modem, 0, "cdmamodem", data->aux);
 }
 
-static void huaweicdma_post_sim(struct ofono_modem *modem)
+static void speedupcdma_post_sim(struct ofono_modem *modem)
 {
 	DBG("%p", modem);
 }
 
-static void huaweicdma_post_online(struct ofono_modem *modem)
+static void speedupcdma_post_online(struct ofono_modem *modem)
 {
-	struct huaweicdma_data *data = ofono_modem_get_data(modem);
+	struct speedupcdma_data *data = ofono_modem_get_data(modem);
 
 	DBG("%p", modem);
 
 	ofono_cdma_connman_create(modem, 0, "cdmamodem", data->modem);
 }
 
-static struct ofono_modem_driver huaweicdma_driver = {
-	.name		= "huaweicdma",
-	.probe		= huaweicdma_probe,
-	.remove		= huaweicdma_remove,
-	.enable		= huaweicdma_enable,
-	.disable	= huaweicdma_disable,
-	.pre_sim	= huaweicdma_pre_sim,
-	.post_sim	= huaweicdma_post_sim,
-	.post_online	= huaweicdma_post_online,
+static struct ofono_modem_driver speedupcdma_driver = {
+	.name		= "speedupcdma",
+	.probe		= speedupcdma_probe,
+	.remove		= speedupcdma_remove,
+	.enable		= speedupcdma_enable,
+	.disable	= speedupcdma_disable,
+	.pre_sim	= speedupcdma_pre_sim,
+	.post_sim	= speedupcdma_post_sim,
+	.post_online	= speedupcdma_post_online,
 };
 
-static int huaweicdma_init(void)
+static int speedupcdma_init(void)
 {
-	return ofono_modem_driver_register(&huaweicdma_driver);
+	return ofono_modem_driver_register(&speedupcdma_driver);
 }
 
-static void huaweicdma_exit(void)
+static void speedupcdma_exit(void)
 {
-	ofono_modem_driver_unregister(&huaweicdma_driver);
+	ofono_modem_driver_unregister(&speedupcdma_driver);
 }
 
-OFONO_PLUGIN_DEFINE(huaweicdma, "Huawei CDMA modem driver", VERSION,
+OFONO_PLUGIN_DEFINE(speedupcdma, "Speed Up CDMA modem driver", VERSION,
 				OFONO_PLUGIN_PRIORITY_DEFAULT,
-				huaweicdma_init, huaweicdma_exit)
+				speedupcdma_init, speedupcdma_exit)

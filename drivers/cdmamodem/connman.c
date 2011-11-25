@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include <glib.h>
 
@@ -40,6 +41,8 @@
 #include "gatppp.h"
 
 #include "cdmamodem.h"
+
+#define TUN_SYSFS_DIR "/sys/devices/virtual/misc/tun"
 
 #define STATIC_IP_NETMASK "255.255.255.255"
 
@@ -56,6 +59,8 @@ struct connman_data {
 	GAtChat *chat;
 	GAtPPP *ppp;
 	enum state state;
+	char username[OFONO_CDMA_CONNMAN_MAX_USERNAME_LENGTH + 1];
+	char password[OFONO_CDMA_CONNMAN_MAX_PASSWORD_LENGTH + 1];
 	union {
 		ofono_cdma_connman_cb_t down_cb;	/* Down callback */
 		ofono_cdma_connman_up_cb_t up_cb;	/* Up callback */
@@ -145,6 +150,8 @@ static gboolean setup_ppp(struct ofono_cdma_connman *cm)
 	g_at_ppp_set_connect_function(cd->ppp, ppp_connect, cm);
 	g_at_ppp_set_disconnect_function(cd->ppp, ppp_disconnect, cm);
 
+	g_at_ppp_set_credentials(cd->ppp, cd->username, cd->password);
+
 	/* open the ppp connection */
 	g_at_ppp_open(cd->ppp, io);
 
@@ -175,6 +182,8 @@ static void atd_cb(gboolean ok, GAtResult *result, gpointer user_data)
 }
 
 static void cdma_connman_activate(struct ofono_cdma_connman *cm,
+					const char *username,
+					const char *password,
 					ofono_cdma_connman_up_cb_t cb,
 					void *data)
 {
@@ -185,6 +194,9 @@ static void cdma_connman_activate(struct ofono_cdma_connman *cm,
 
 	cd->up_cb = cb;
 	cd->cb_data = data;
+	strcpy(cd->username, username);
+	strcpy(cd->password, password);
+
 	cd->state = STATE_ENABLING;
 
 	sprintf(buf, "ATD#777");
@@ -231,8 +243,14 @@ static int cdma_connman_probe(struct ofono_cdma_connman *cm,
 {
 	GAtChat *chat = data;
 	struct connman_data *cd;
+	struct stat st;
 
 	DBG("");
+
+	if (stat(TUN_SYSFS_DIR, &st) < 0) {
+		ofono_error("Missing support for TUN/TAP devices");
+		return -ENODEV;
+	}
 
 	cd = g_try_new0(struct connman_data, 1);
 	if (cd == NULL)

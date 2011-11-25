@@ -57,6 +57,8 @@ struct ofono_cdma_connman {
 	const struct ofono_cdma_connman_driver *driver;
 	void *driver_data;
 	struct ofono_atom *atom;
+	char username[OFONO_CDMA_CONNMAN_MAX_USERNAME_LENGTH + 1];
+	char password[OFONO_CDMA_CONNMAN_MAX_PASSWORD_LENGTH + 1];
 };
 
 static void cdma_connman_settings_free(struct cdma_connman_settings *settings)
@@ -371,6 +373,54 @@ static DBusMessage *cdma_connman_get_properties(DBusConnection *conn,
 	return reply;
 }
 
+static DBusMessage *cdma_connman_set_username(struct ofono_cdma_connman *cm,
+					DBusConnection *conn, DBusMessage *msg,
+					const char *username)
+{
+	const char *path;
+
+	if (strlen(username) > OFONO_CDMA_CONNMAN_MAX_USERNAME_LENGTH)
+		return __ofono_error_invalid_format(msg);
+
+	if (g_str_equal(username, cm->username))
+		return dbus_message_new_method_return(msg);
+
+	strcpy(cm->username, username);
+
+	g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
+
+	path = __ofono_atom_get_path(cm->atom);
+	ofono_dbus_signal_property_changed(conn, path,
+				OFONO_CDMA_CONNECTION_MANAGER_INTERFACE,
+				"Username", DBUS_TYPE_STRING, &username);
+
+	return NULL;
+}
+
+static DBusMessage *cdma_connman_set_password(struct ofono_cdma_connman *cm,
+					DBusConnection *conn, DBusMessage *msg,
+					const char *password)
+{
+	const char *path;
+
+	if (strlen(password) > OFONO_CDMA_CONNMAN_MAX_PASSWORD_LENGTH)
+		return __ofono_error_invalid_format(msg);
+
+	if (g_str_equal(password, cm->password))
+		return dbus_message_new_method_return(msg);
+
+	strcpy(cm->password, password);
+
+	g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
+
+	path = __ofono_atom_get_path(cm->atom);
+	ofono_dbus_signal_property_changed(conn, path,
+				OFONO_CDMA_CONNECTION_MANAGER_INTERFACE,
+				"Password", DBUS_TYPE_STRING, &password);
+
+	return NULL;
+}
+
 static DBusMessage *cdma_connman_set_property(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
@@ -379,6 +429,7 @@ static DBusMessage *cdma_connman_set_property(DBusConnection *conn,
 	DBusMessageIter var;
 	const char *property;
 	dbus_bool_t value;
+	const char *str;
 
 	DBG("");
 
@@ -416,11 +467,24 @@ static DBusMessage *cdma_connman_set_property(DBusConnection *conn,
 
 		/* TODO: add logic to support CDMA Network Registration */
 		if (value)
-			cm->driver->activate(cm, activate_callback, cm);
+			cm->driver->activate(cm, cm->username, cm->password,
+						activate_callback, cm);
 		else
 			cm->driver->deactivate(cm, deactivate_callback, cm);
 
-		return dbus_message_new_method_return(msg);
+		return NULL;
+	} else if (!strcmp(property, "Username")) {
+		if (dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_STRING)
+			return __ofono_error_invalid_args(msg);
+
+		dbus_message_iter_get_basic(&var, &str);
+		return cdma_connman_set_username(cm, conn, msg, str);
+	} else if (!strcmp(property, "Password")) {
+		if (dbus_message_iter_get_arg_type(&var) != DBUS_TYPE_STRING)
+			return __ofono_error_invalid_args(msg);
+
+		dbus_message_iter_get_basic(&var, &str);
+		return cdma_connman_set_password(cm, conn, msg, str);
 	}
 
 	/* TODO: Dormant property. Not yet supported. */

@@ -2,7 +2,7 @@
  *
  *  oFono - Open Source Telephony
  *
- *  Copyright (C) 2008-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2008-2011  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -19,14 +19,31 @@
  *
  */
 
-#include <drivers/atmodem/atutil.h>
-#include <ofono/dbus.h>
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
-extern void hfp_netreg_init(void);
-extern void hfp_netreg_exit(void);
+#include <glib.h>
+#include <gatchat.h>
 
-extern void hfp_call_volume_init(void);
-extern void hfp_call_volume_exit(void);
+#define OFONO_API_SUBJECT_TO_CHANGE
+#include <ofono/plugin.h>
+#include <ofono/types.h>
 
-extern void hfp_voicecall_init(void);
-extern void hfp_voicecall_exit(void);
+#include "dunmodem.h"
+
+static int dunmodem_init(void)
+{
+	dun_netreg_init();
+
+	return 0;
+}
+
+static void dunmodem_exit(void)
+{
+	dun_netreg_exit();
+}
+
+OFONO_PLUGIN_DEFINE(dunmodem, "Dialup modem driver", VERSION,
+			OFONO_PLUGIN_PRIORITY_DEFAULT,
+			dunmodem_init, dunmodem_exit)

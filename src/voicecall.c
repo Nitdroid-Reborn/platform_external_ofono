@@ -42,6 +42,7 @@
 #define MAX_VOICE_CALLS 16
 
 #define VOICECALL_FLAG_SIM_ECC_READY 0x1
+#define VOICECALL_FLAG_STK_MODEM_CALLSETUP 0x2
 
 #define SETTINGS_STORE "voicecall"
 #define SETTINGS_GROUP "Settings"
@@ -74,7 +75,6 @@ struct ofono_voicecall {
 	ofono_voicecall_cb_t release_queue_done_cb;
 	struct ofono_emulator *pending_em;
 	unsigned int pending_id;
-	char *em_atd_number;
 };
 
 struct voicecall {
@@ -735,6 +735,8 @@ static void notify_emulator_call_status(struct ofono_voicecall *vc)
 {
 	struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
 	gboolean call = FALSE;
+	unsigned int non_mpty = 0;
+	gboolean multiparty = FALSE;
 	gboolean held = FALSE;
 	gboolean incoming = FALSE;
 	gboolean dialing = FALSE;
@@ -752,6 +754,12 @@ static void notify_emulator_call_status(struct ofono_voicecall *vc)
 		switch (v->call->status) {
 		case CALL_STATUS_ACTIVE:
 			call = TRUE;
+			if (g_slist_find_custom(vc->multiparty_list,
+						GINT_TO_POINTER(v->call->id),
+						call_compare_by_id))
+				multiparty = TRUE;
+			else
+				non_mpty++;
 			break;
 
 		case CALL_STATUS_HELD:
@@ -802,6 +810,18 @@ static void notify_emulator_call_status(struct ofono_voicecall *vc)
 	if (held)
 		data.status = call ? OFONO_EMULATOR_CALLHELD_MULTIPLE :
 					OFONO_EMULATOR_CALLHELD_ON_HOLD;
+	else if (non_mpty > 1 || (non_mpty && multiparty))
+		/*
+		 * After call swap, it is possible that all calls move
+		 * temporarily to active state (depending on call state update
+		 * order), generating an update of callheld indicator to 0.
+		 * This will fail PTS test TP/TWC/BV-03-I.
+		 *
+		 * So, in case of multiple active calls, or an active call with
+		 * an active mutiparty call, force update of callheld indicator
+		 * to 2 (intermediate state allowed).
+		 */
+		data.status = OFONO_EMULATOR_CALLHELD_ON_HOLD;
 	else
 		data.status = OFONO_EMULATOR_CALLHELD_NONE;
 
@@ -1492,13 +1512,13 @@ static int voicecall_dial(struct ofono_voicecall *vc, const char *number,
 
 	string_to_phone_number(number, &ph);
 
-	vc->driver->dial(vc, &ph, clir, cb, vc);
-
 	if (vc->settings) {
 		g_key_file_set_string(vc->settings, SETTINGS_GROUP,
 					"Number", number);
 		storage_sync(vc->imsi, SETTINGS_STORE, vc->settings);
 	}
+
+	vc->driver->dial(vc, &ph, clir, cb, vc);
 
 	return 0;
 }
@@ -2210,6 +2230,42 @@ void ofono_voicecall_notify(struct ofono_voicecall *vc,
 		goto error;
 	}
 
+	if (vc->flags & VOICECALL_FLAG_STK_MODEM_CALLSETUP) {
+		struct dial_request *req = vc->dial_req;
+		const char *number = phone_number_to_string(&req->ph);
+
+		if (!strcmp(number, "112")) {
+			struct ofono_modem *modem =
+					__ofono_atom_get_modem(vc->atom);
+
+			__ofono_modem_inc_emergency_mode(modem);
+		}
+
+		if (v->call->clip_validity == CLIP_VALIDITY_NOT_AVAILABLE) {
+			char *number = v->call->phone_number.number;
+
+			v->call->phone_number.type = req->ph.type;
+			strncpy(number, req->ph.number,
+					OFONO_MAX_PHONE_NUMBER_LENGTH);
+			v->call->clip_validity = CLIP_VALIDITY_VALID;
+			number[OFONO_MAX_PHONE_NUMBER_LENGTH] = '\0';
+		}
+
+		v->message = req->message;
+		v->icon_id = req->icon_id;
+
+		req->message = NULL;
+		req->call = v;
+
+		/*
+		 * TS 102 223 Section 6.4.13: The terminal shall not store
+		 * in the UICC the call set-up details (called party number
+		 * and associated parameters)
+		 */
+		v->untracked = TRUE;
+		vc->flags &= ~VOICECALL_FLAG_STK_MODEM_CALLSETUP;
+	}
+
 	v->detect_time = time(NULL);
 
 	if (!voicecall_dbus_register(v)) {
@@ -2671,10 +2727,14 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *user)
 
 		free_sim_ecc_numbers(vc, FALSE);
 		set_new_ecc(vc);
+
+		voicecall_close_settings(vc);
+		break;
 	case OFONO_SIM_STATE_READY:
 		voicecall_load_settings(vc);
 		break;
-	default:
+	case OFONO_SIM_STATE_LOCKED_OUT:
+		voicecall_close_settings(vc);
 		break;
 	}
 }
@@ -3139,13 +3199,18 @@ static void emulator_dial_callback(const struct ofono_error *error, void *data)
 	struct ofono_voicecall *vc = data;
 	gboolean need_to_emit;
 	struct voicecall *v;
+	const char *number;
+	GError *err = NULL;
 
-	v = dial_handle_result(vc, error, vc->em_atd_number, &need_to_emit);
+	number = g_key_file_get_string(vc->settings, SETTINGS_GROUP,
+					"Number", &err);
+
+	v = dial_handle_result(vc, error, number, &need_to_emit);
 
 	if (v == NULL) {
 		struct ofono_modem *modem = __ofono_atom_get_modem(vc->atom);
 
-		if (is_emergency_number(vc, vc->em_atd_number) == TRUE)
+		if (is_emergency_number(vc, number) == TRUE)
 			__ofono_modem_dec_emergency_mode(modem);
 	}
 
@@ -3153,8 +3218,6 @@ static void emulator_dial_callback(const struct ofono_error *error, void *data)
 		ofono_emulator_send_final(vc->pending_em, error);
 
 	vc->pending_em = NULL;
-	g_free(vc->em_atd_number);
-	vc->em_atd_number = NULL;
 
 	notify_emulator_call_status(vc);
 
@@ -3176,7 +3239,6 @@ static void emulator_dial(struct ofono_emulator *em, struct ofono_voicecall *vc,
 	}
 
 	vc->pending_em = em;
-	vc->em_atd_number = g_strdup(number);
 
 	err = voicecall_dial(vc, number, OFONO_CLIR_OPTION_DEFAULT,
 					emulator_dial_callback, vc);
@@ -3185,8 +3247,6 @@ static void emulator_dial(struct ofono_emulator *em, struct ofono_voicecall *vc,
 		return;
 
 	vc->pending_em = NULL;
-	g_free(vc->em_atd_number);
-	vc->em_atd_number = NULL;
 
 	switch (err) {
 	case -ENETDOWN:
@@ -3526,7 +3586,7 @@ int __ofono_voicecall_dial(struct ofono_voicecall *vc,
 
 	/* TODO: parse the tones to dial after call connected */
 	req->ph.type = addr_type;
-	strncpy(req->ph.number, addr, 20);
+	strncpy(req->ph.number, addr, OFONO_MAX_PHONE_NUMBER_LENGTH);
 
 	vc->dial_req = req;
 
@@ -3669,6 +3729,37 @@ void __ofono_voicecall_tone_cancel(struct ofono_voicecall *vc, int id)
 		g_source_remove(vc->tone_source);
 		tone_request_run(vc);
 	}
+}
+
+void __ofono_voicecall_set_alpha_and_icon_id(struct ofono_voicecall *vc,
+						const char *addr, int addr_type,
+						const char *message,
+						unsigned char icon_id)
+{
+	struct dial_request *req;
+
+	req = g_new0(struct dial_request, 1);
+
+	req->message = g_strdup(message);
+	req->icon_id = icon_id;
+
+	req->ph.type = addr_type;
+	strncpy(req->ph.number, addr, OFONO_MAX_PHONE_NUMBER_LENGTH);
+
+	vc->dial_req = req;
+
+	vc->flags |= VOICECALL_FLAG_STK_MODEM_CALLSETUP;
+}
+
+void __ofono_voicecall_clear_alpha_and_icon_id(struct ofono_voicecall *vc)
+{
+	g_free(vc->dial_req->message);
+	vc->dial_req->message = NULL;
+
+	g_free(vc->dial_req);
+	vc->dial_req = NULL;
+
+	vc->flags &= ~VOICECALL_FLAG_STK_MODEM_CALLSETUP;
 }
 
 static void ssn_mt_forwarded_notify(struct ofono_voicecall *vc,

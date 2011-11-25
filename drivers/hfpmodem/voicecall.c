@@ -29,17 +29,20 @@
 #include <stdio.h>
 
 #include <glib.h>
+#include <gatchat.h>
+#include <gatresult.h>
 
 #include <ofono/log.h>
 #include <ofono/modem.h>
 #include <ofono/voicecall.h>
+
 #include "common.h"
-#include "gatchat.h"
-#include "gatresult.h"
 
 #include "hfpmodem.h"
+#include "slc.h"
 
 #define POLL_CLCC_INTERVAL 2000
+#define POLL_CLCC_DELAY 50
 #define CLIP_TIMEOUT 500
 
 static const char *none_prefix[] = { NULL };
@@ -1022,6 +1025,11 @@ static void ciev_callheld_notify(struct ofono_voicecall *vc,
 		break;
 
 	case 1:
+		if (vd->clcc_source) {
+			g_source_remove(vd->clcc_source);
+			vd->clcc_source = 0;
+		}
+
 		/* We have to poll here, we have no idea whether the call was
 		 * accepted by CHLD=1 or swapped by CHLD=2 or one call was
 		 * chosed for private chat by CHLD=2x
@@ -1041,7 +1049,15 @@ static void ciev_callheld_notify(struct ofono_voicecall *vc,
 				ofono_voicecall_notify(vc, call);
 			}
 		} else if (callheld == 1) {
-			release_with_status(vc, CALL_STATUS_ACTIVE);
+			if (vd->clcc_source)
+				g_source_remove(vd->clcc_source);
+
+			/* We have to schedule a poll here, we have no idea
+			 * whether active call was dropped by remote or if this
+			 * is an intermediate state during call swap
+			 */
+			vd->clcc_source = g_timeout_add(POLL_CLCC_DELAY,
+							poll_clcc, vc);
 		}
 	}
 
@@ -1115,17 +1131,17 @@ static void hfp_voicecall_initialized(gboolean ok, GAtResult *result,
 static int hfp_voicecall_probe(struct ofono_voicecall *vc, unsigned int vendor,
 				gpointer user_data)
 {
-	struct hfp_data *data = user_data;
+	struct hfp_slc_info *info = user_data;
 	struct voicecall_data *vd;
 
 	vd = g_new0(struct voicecall_data, 1);
 
-	vd->chat = data->chat;
-	vd->ag_features = data->ag_features;
-	vd->ag_mpty_features = data->ag_mpty_features;
+	vd->chat = g_at_chat_clone(info->chat);
+	vd->ag_features = info->ag_features;
+	vd->ag_mpty_features = info->ag_mpty_features;
 
-	memcpy(vd->cind_pos, data->cind_pos, HFP_INDICATOR_LAST);
-	memcpy(vd->cind_val, data->cind_val, HFP_INDICATOR_LAST);
+	memcpy(vd->cind_pos, info->cind_pos, HFP_INDICATOR_LAST);
+	memcpy(vd->cind_val, info->cind_val, HFP_INDICATOR_LAST);
 
 	ofono_voicecall_set_data(vc, vd);
 

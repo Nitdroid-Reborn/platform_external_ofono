@@ -300,7 +300,7 @@ static void add_huawei(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	struct udev_list_entry *entry;
-	const char *devnode, *type;
+	const char *devnode;
 	int ppp, pcui;
 
 	DBG("modem %p", modem);
@@ -325,15 +325,7 @@ static void add_huawei(struct ofono_modem *modem,
 	entry = udev_device_get_properties_list_entry(udev_device);
 	while (entry) {
 		const char *name = udev_list_entry_get_name(entry);
-		type = udev_list_entry_get_value(entry);
-
-		if (g_str_equal(name, "OFONO_HUAWEI_VOICE") == TRUE) {
-			gboolean value = g_str_equal(type, "1");
-
-			ofono_modem_set_boolean(modem, "HasVoice", value);
-			entry = udev_list_entry_get_next(entry);
-			continue;
-		}
+		const char *type = udev_list_entry_get_value(entry);
 
 		if (g_str_equal(name, "OFONO_HUAWEI_TYPE") != TRUE) {
 			entry = udev_list_entry_get_next(entry);
@@ -357,9 +349,6 @@ static void add_huawei(struct ofono_modem *modem,
 
 			pcui = 1;
 			ofono_modem_set_integer(modem, "PcuiRegistered", pcui);
-		} else if (g_str_equal(type, "NDIS") == TRUE) {
-			devnode = udev_device_get_devnode(udev_device);
-			ofono_modem_set_string(modem, "NDIS", devnode);
 		}
 
 		break;
@@ -405,38 +394,39 @@ static void add_novatel(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	const char *devnode, *intfnum;
-	struct udev_device *parent;
 	int registered;
 
 	DBG("modem %p", modem);
 
 	registered = ofono_modem_get_integer(modem, "Registered");
-	if (registered != 0)
-		return;
 
-	parent = udev_device_get_parent(udev_device);
-	parent = udev_device_get_parent(parent);
-	intfnum = udev_device_get_sysattr_value(parent, "bInterfaceNumber");
+        if (registered > 1)
+                return;
+
+	intfnum = get_property(udev_device, "ID_USB_INTERFACE_NUM");
 
 	DBG("intfnum %s", intfnum);
 
 	if (g_strcmp0(intfnum, "00") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "PrimaryDevice", devnode);
+
+		ofono_modem_set_integer(modem, "Registered", ++registered);
 	} else if (g_strcmp0(intfnum, "01") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "SecondaryDevice", devnode);
 
-		ofono_modem_set_integer(modem, "Registered", 1);
-		ofono_modem_register(modem);
+		ofono_modem_set_integer(modem, "Registered", ++registered);
 	}
+
+	if (registered > 1)
+		ofono_modem_register(modem);
 }
 
 static void add_nokia(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	const char *devnode, *intfnum;
-	struct udev_device *parent;
 	int registered;
 
 	DBG("modem %p", modem);
@@ -445,15 +435,14 @@ static void add_nokia(struct ofono_modem *modem,
 	if (registered != 0)
 		return;
 
-	parent = udev_device_get_parent(udev_device);
-	intfnum = udev_device_get_sysattr_value(parent, "bInterfaceNumber");
+	intfnum = get_property(udev_device, "ID_USB_INTERFACE_NUM");
 
 	DBG("intfnum %s", intfnum);
 
-	if (g_strcmp0(intfnum, "01") == 0) {
+	if (g_strcmp0(intfnum, "02") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "Modem", devnode);
-	} else if (g_strcmp0(intfnum, "03") == 0) {
+	} else if (g_strcmp0(intfnum, "04") == 0) {
 		devnode = udev_device_get_devnode(udev_device);
 		ofono_modem_set_string(modem, "Control", devnode);
 
@@ -566,7 +555,6 @@ static void add_linktop(struct ofono_modem *modem,
 					struct udev_device *udev_device)
 {
 	const char *devnode, *intfnum;
-	struct udev_device *parent;
 	int registered;
 
 	DBG("modem %p", modem);
@@ -575,8 +563,7 @@ static void add_linktop(struct ofono_modem *modem,
 	if (registered != 0)
 		return;
 
-	parent = udev_device_get_parent(udev_device);
-	intfnum = udev_device_get_sysattr_value(parent, "bInterfaceNumber");
+	intfnum = get_property(udev_device, "ID_USB_INTERFACE_NUM");
 
 	DBG("intfnum %s", intfnum);
 
@@ -691,6 +678,41 @@ static void add_speedup(struct ofono_modem *modem,
 		ofono_modem_register(modem);
 }
 
+static void add_samsung(struct ofono_modem *modem,
+					struct udev_device *udev_device)
+{
+	const char *subsystem;
+
+	DBG("modem %p", modem);
+
+	subsystem = udev_device_get_subsystem(udev_device);
+	if (subsystem == NULL)
+		return;
+
+	if (g_str_equal(subsystem, "net") == TRUE) {
+		const char *interface;
+
+		interface = get_property(udev_device, "INTERFACE");
+		if (interface == NULL)
+			return;
+
+		DBG("network %s", interface);
+
+		ofono_modem_set_string(modem, "Network", interface);
+	} else if (g_str_equal(subsystem, "tty") == TRUE) {
+		const char *devnode;
+
+		devnode = udev_device_get_devnode(udev_device);
+		if (devnode == NULL)
+			return;
+
+		DBG("device %s", devnode);
+
+		ofono_modem_set_string(modem, "Device", devnode);
+		ofono_modem_register(modem);
+	}
+}
+
 static void add_modem(struct udev_device *udev_device)
 {
 	struct ofono_modem *modem;
@@ -767,6 +789,8 @@ done:
 		add_zte(modem, udev_device);
 	else if (g_strcmp0(driver, "huawei") == 0)
 		add_huawei(modem, udev_device);
+	else if (g_strcmp0(driver, "huaweicdma") == 0)
+		add_huawei(modem, udev_device);
 	else if (g_strcmp0(driver, "sierra") == 0)
 		add_sierra(modem, udev_device);
 	else if (g_strcmp0(driver, "novatel") == 0)
@@ -789,10 +813,14 @@ done:
 		add_telit(modem, udev_device);
 	else if (g_strcmp0(driver, "nokiacdma") == 0)
 		add_nokiacdma(modem, udev_device);
-        else if (g_strcmp0(driver, "linktop") == 0)
+	else if (g_strcmp0(driver, "linktop") == 0)
 		add_linktop(modem, udev_device);
-        else if (g_strcmp0(driver, "speedup") == 0)
+	else if (g_strcmp0(driver, "speedup") == 0)
 		add_speedup(modem, udev_device);
+	else if (g_strcmp0(driver, "speedupcdma") == 0)
+		add_speedup(modem, udev_device);
+	else if (g_strcmp0(driver, "samsung") == 0)
+		add_samsung(modem, udev_device);
 }
 
 static gboolean devpath_remove(gpointer key, gpointer value, gpointer user_data)

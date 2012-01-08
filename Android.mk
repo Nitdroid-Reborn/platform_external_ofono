@@ -26,6 +26,14 @@ ifeq ($(BUILD_WITH_OFONO),true)
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
+# create symlink 'ofono' -> '.' in include directory
+SYMLINK := $(intermediates)/ofono_config.h
+$(LOCAL_PATH)/gdbus/mainloop.c: $(SYMLINK)
+$(SYMLINK): PRIVATE_CUSTOM_TOOL = echo "cd external/ofono/include; rm -f ofono 2>/dev/null; ln -s . ofono" | sh
+$(SYMLINK): $(LOCAL_PATH)/Android.mk
+$(SYMLINK):
+	$(transform-generated-source)
+
 LOCAL_MODULE_TAGS := optional
 
 LOCAL_CFLAGS+=-DOFONO_PLUGIN_BUILTIN -DHAVE_CONFIG_H

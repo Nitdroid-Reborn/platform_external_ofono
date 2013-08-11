@@ -127,8 +127,10 @@ LOCAL_C_INCLUDES := \
 	external/ofono/gisi \
 	external/ofono/gatchat \
 	external/ofono/gdbus \
-	$(call include-path-for, dbus) \
-	$(call include-path-for, glib)
+	external/dbus \
+	external/glib \
+	external/glib/glib \
+	external/glib/android
 ##
 
 

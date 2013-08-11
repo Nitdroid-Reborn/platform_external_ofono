@@ -27,6 +27,7 @@
 #include <errno.h>
 
 #include <glib.h>
+#include <gchecksum.h>
 #include <gdbus.h>
 #include <sys/time.h>
 
